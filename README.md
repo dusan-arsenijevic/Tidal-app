@@ -17,10 +17,8 @@ Current implementation uses a production composition root, background workers, a
 
 ## Screenshots
 
-> Placeholder screenshots (to be added)
-
-![Main window placeholder](docs/screenshots/main-window-placeholder.png)
-![Playlist preview placeholder](docs/screenshots/playlist-preview-placeholder.png)
+![Main window](docs/screenshots/main-window.png)
+![Playlist preview](docs/screenshots/playlist-preview.png)
 
 ## Architecture overview
 
