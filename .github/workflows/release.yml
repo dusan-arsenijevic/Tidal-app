@@ -84,6 +84,7 @@ jobs:
             --onefile \
             --paths src \
             --collect-data tidal_playlist_builder.resources \
+            --hidden-import requests \
             --distpath dist/desktop/${{ runner.os }}
 
       - name: Upload desktop artifacts

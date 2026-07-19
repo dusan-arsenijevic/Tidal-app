@@ -68,6 +68,8 @@ def main() -> int:
             str(SRC_DIR),
             "--collect-data",
             "tidal_playlist_builder.resources",
+            "--hidden-import",
+            "requests",
             "--distpath",
             str(paths.dist),
             "--workpath",
