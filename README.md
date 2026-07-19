@@ -20,6 +20,12 @@ Current implementation uses a production composition root, background workers, a
 ![Main window](docs/screenshots/main-window.png)
 ![Playlist preview](docs/screenshots/playlist-preview.png)
 
+To refresh screenshots locally, run:
+
+```powershell
+python scripts/generate_screenshots.py
+```
+
 ## Architecture overview
 
 High-level flow:

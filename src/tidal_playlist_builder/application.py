@@ -2,12 +2,14 @@
 
 from dataclasses import dataclass
 import logging
+from typing import cast
 
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
 from tidal_playlist_builder.exceptions import CacheError
 from tidal_playlist_builder.gui import MainWindow
+from tidal_playlist_builder.gui.font_fallback import ensure_ui_font_has_basic_glyphs
 from tidal_playlist_builder.gui.models import AlbumFilterProxyModel, AlbumTableModel
 from tidal_playlist_builder.repositories import (
     AlbumRepository,
@@ -185,6 +187,7 @@ def run() -> int:
     app = QApplication.instance()
     if app is None:
         app = QApplication([])
+    ensure_ui_font_has_basic_glyphs(cast(QApplication, app))
     install_global_exception_handler()
 
     composition = build_production_composition()
