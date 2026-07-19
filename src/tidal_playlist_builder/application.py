@@ -7,7 +7,11 @@ from typing import cast
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
-from tidal_playlist_builder.exceptions import CacheError
+from tidal_playlist_builder.exceptions import (
+    AuthenticationError,
+    CacheError,
+    CredentialStorageError,
+)
 from tidal_playlist_builder.gui import MainWindow
 from tidal_playlist_builder.gui.font_fallback import ensure_ui_font_has_basic_glyphs
 from tidal_playlist_builder.gui.models import AlbumFilterProxyModel, AlbumTableModel
@@ -19,6 +23,7 @@ from tidal_playlist_builder.repositories import (
 from tidal_playlist_builder.services import (
     CacheService,
     JsonCacheBackend,
+    KeyringCredentialStore,
     PlaylistBuildPlanBuilder,
 )
 from tidal_playlist_builder.threading import WorkerThreadPool
@@ -49,6 +54,7 @@ class AppComposition:
     settings: QSettings
     cache_backend: JsonCacheBackend | None
     cache_service: CacheService
+    credential_store: KeyringCredentialStore
     api_client: TidalApiClient
     artist_repository: ArtistRepository
     album_repository: AlbumRepository
@@ -117,9 +123,24 @@ def build_production_composition(
         max_retries=app_config.retry_count,
         retry_backoff_seconds=app_config.retry_backoff_seconds,
     )
-    if app_config.auth_credentials:
-        logger.info("Authenticating provider from configured credentials")
-        provider.authenticate(app_config.auth_credentials)
+    credential_store = KeyringCredentialStore(service_name=app_config.settings_app)
+    startup_credentials = app_config.auth_credentials
+    if startup_credentials is None:
+        try:
+            startup_credentials = credential_store.load()
+        except CredentialStorageError:
+            logger.warning(
+                "Secure credential storage unavailable; startup auto-login disabled",
+                exc_info=True,
+            )
+    if startup_credentials:
+        try:
+            logger.info("Authenticating provider from startup credentials")
+            provider.authenticate(startup_credentials)
+        except AuthenticationError:
+            logger.warning(
+                "Startup authentication failed; continuing signed out", exc_info=True
+            )
 
     # initialize repositories
     artist_repository = provider.artist_repository
@@ -145,6 +166,7 @@ def build_production_composition(
         playlist_builder=PlaylistBuildPlanBuilder(),
         album_table_model=model,
         album_proxy_model=proxy,
+        credential_store=credential_store,
     )
     workflow.playlistCreated.connect(
         lambda playlist_id: main_window.show_success_dialog(
@@ -171,6 +193,7 @@ def build_production_composition(
         album_table_model=model,
         album_proxy_model=proxy,
         main_window=main_window,
+        credential_store=credential_store,
     )
 
 

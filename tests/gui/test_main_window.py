@@ -7,6 +7,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
+    QLabel,
     QLineEdit,
     QPushButton,
     QSpinBox,
@@ -280,6 +281,7 @@ def test_create_playlist_action_state_depends_on_selection_and_busy(
     window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
     qtbot.addWidget(window)
     window.show()
+    window.set_publish_ready(True)
 
     create_actions = [
         action
@@ -304,6 +306,7 @@ def test_create_playlist_action_emits_user_intent(qtbot, tmp_path: Path) -> None
     qtbot.addWidget(window)
     window.show()
 
+    window.set_publish_ready(True)
     window.album_table_model.set_row_checked(0, True)
     emitted: list[bool] = []
     window.createPlaylistRequested.connect(lambda: emitted.append(True))
@@ -314,6 +317,23 @@ def test_create_playlist_action_emits_user_intent(qtbot, tmp_path: Path) -> None
     )
     create_action.trigger()
 
+    assert emitted == [True]
+
+
+def test_publish_button_emits_user_intent(qtbot, tmp_path: Path) -> None:
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
+    qtbot.addWidget(window)
+    window.show()
+    window.set_publish_ready(True)
+    window.album_table_model.set_row_checked(0, True)
+
+    emitted: list[bool] = []
+    window.createPlaylistRequested.connect(lambda: emitted.append(True))
+    publish_button = window.findChild(QPushButton, "publishPlaylistButton")
+    assert publish_button is not None
+    assert publish_button.isEnabled()
+
+    qtbot.mouseClick(publish_button, Qt.MouseButton.LeftButton)
     assert emitted == [True]
 
 
@@ -439,3 +459,52 @@ def test_about_dialog_displays_release_metadata(
     assert COPYRIGHT in text
     assert LICENSE_NAME in text
     assert PROJECT_URL in text
+
+
+def test_sign_in_action_emits_credentials(qtbot, tmp_path: Path, monkeypatch) -> None:
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
+    qtbot.addWidget(window)
+    window.show()
+
+    monkeypatch.setattr(
+        window,
+        "_prompt_sign_in_credentials",
+        lambda _default: ({"username": "demo", "password": "secret"}, True),
+    )
+    emitted: list[tuple[dict[str, str], bool]] = []
+    window.signInRequested.connect(
+        lambda credentials, remember: emitted.append((credentials, remember))
+    )
+    sign_in_action = next(
+        action
+        for action in window.findChildren(QAction)
+        if action.text() == "Sign In..."
+    )
+    sign_in_action.trigger()
+
+    assert emitted == [({"username": "demo", "password": "secret"}, True)]
+
+
+def test_authentication_state_updates_account_actions(qtbot, tmp_path: Path) -> None:
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
+    qtbot.addWidget(window)
+    window.show()
+
+    sign_in_action = next(
+        action
+        for action in window.findChildren(QAction)
+        if action.text() == "Sign In..."
+    )
+    sign_out_action = next(
+        action for action in window.findChildren(QAction) if action.text() == "Sign Out"
+    )
+
+    assert sign_in_action.isEnabled()
+    assert not sign_out_action.isEnabled()
+
+    window.set_authentication_state(authenticated=True, username="demo-user")
+
+    assert not sign_in_action.isEnabled()
+    assert sign_out_action.isEnabled()
+    labels = window.statusBar().findChildren(QLabel)
+    assert any("demo-user" in label.text() for label in labels)

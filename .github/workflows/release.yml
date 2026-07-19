@@ -85,6 +85,7 @@ jobs:
             --paths src \
             --collect-data tidal_playlist_builder.resources \
             --hidden-import requests \
+            --hidden-import keyring \
             --distpath dist/desktop/${{ runner.os }}
 
       - name: Upload desktop artifacts

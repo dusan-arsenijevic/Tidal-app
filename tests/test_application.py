@@ -19,6 +19,9 @@ class _FakeApiClient:
     def authenticate(self, credentials: dict[str, str]) -> str:
         return "token"
 
+    def clear_authentication(self) -> None:
+        return None
+
     def search_artists(self, query: str, limit: int) -> list[dict[str, object]]:
         return []
 

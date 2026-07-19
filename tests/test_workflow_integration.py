@@ -28,6 +28,9 @@ class _WorkflowApiClient:
         self.auth_calls += 1
         return "token"
 
+    def clear_authentication(self) -> None:
+        return None
+
     def search_artists(self, query: str, limit: int) -> list[dict[str, object]]:
         del query, limit
         self.search_calls += 1
@@ -105,6 +108,21 @@ def _config(tmp_path: Path) -> AppConfig:
         default_ttl_seconds=300,
         max_worker_threads=2,
         auth_credentials={"token": "x"},
+    )
+
+
+def _config_without_auth(tmp_path: Path) -> AppConfig:
+    return AppConfig(
+        base_url="https://api.example.test/v1",
+        timeout_seconds=5.0,
+        retry_count=0,
+        retry_backoff_seconds=0.0,
+        user_agent="workflow-test/1.0",
+        cache_directory=tmp_path / "cache",
+        max_memory_entries=64,
+        default_ttl_seconds=300,
+        max_worker_threads=2,
+        auth_credentials=None,
     )
 
 
@@ -242,3 +260,43 @@ def test_workflow_playlist_progress_and_cancellation(qtbot, tmp_path: Path) -> N
     assert "cancelled" in failures[-1].lower()
     assert client.create_calls == 1
     assert client.add_calls >= 1
+
+
+def test_workflow_sign_in_enables_search_and_persists_credentials(
+    monkeypatch, qtbot, tmp_path: Path
+) -> None:
+    class _FakeCredentialStore:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.saved: tuple[str, str] | None = None
+
+        def load(self) -> dict[str, str] | None:
+            return None
+
+        def save(self, *, username: str, password: str) -> None:
+            self.saved = (username, password)
+
+        def clear(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "tidal_playlist_builder.application.KeyringCredentialStore",
+        _FakeCredentialStore,
+    )
+    client = _WorkflowApiClient()
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    composition = build_production_composition(
+        _config_without_auth(tmp_path), settings=settings, api_client=client
+    )
+    qtbot.addWidget(composition.main_window)
+    composition.main_window.show()
+
+    assert not _search_button(composition).isEnabled()
+    composition.workflow._on_sign_in_requested(  # noqa: SLF001
+        {"username": "demo-user", "password": "demo-pass"}, True
+    )
+    qtbot.waitUntil(lambda: _search_button(composition).isEnabled(), timeout=3000)
+
+    store = composition.credential_store
+    assert isinstance(store, _FakeCredentialStore)
+    assert store.saved == ("demo-user", "demo-pass")
+    assert client.auth_calls == 1

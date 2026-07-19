@@ -3,7 +3,11 @@
 from PySide6.QtCore import QSettings, Qt, Signal, Slot
 from PySide6.QtGui import QAction, QCloseEvent, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -46,6 +50,9 @@ class MainWindow(QMainWindow):
     refreshRequested = Signal()
     createPlaylistRequested = Signal()
     albumSelectionChanged = Signal(list)
+    playlistNameChanged = Signal(str)
+    signInRequested = Signal(dict, bool)
+    signOutRequested = Signal()
 
     _SETTINGS_GEOMETRY = "main_window/geometry"
     _SETTINGS_SPLITTER = "main_window/splitter_state"
@@ -75,6 +82,8 @@ class MainWindow(QMainWindow):
         self._search_enabled = False
         self._is_busy = False
         self._has_album_selection = False
+        self._publish_ready = False
+        self._authenticated_username: str | None = None
 
         self._splitter: QSplitter
         self._album_table: QTableView
@@ -83,8 +92,13 @@ class MainWindow(QMainWindow):
         self._refresh_action: QAction
         self._create_playlist_action: QAction
         self._create_playlist_menu_action: QAction
+        self._publish_playlist_button: QPushButton
+        self._playlist_name_input: QLineEdit
+        self._sign_in_action: QAction
+        self._sign_out_action: QAction
         self._preview_table: QTableView
         self._preview_model: QStandardItemModel
+        self._auth_status_label: QLabel
         self._duplicate_status_combo: QComboBox
         self._release_type_combo: QComboBox
         self._album_type_combo: QComboBox
@@ -116,6 +130,15 @@ class MainWindow(QMainWindow):
             self._on_create_playlist_clicked
         )
         actions_menu.addAction(self._create_playlist_menu_action)
+
+        account_menu: QMenu = self.menuBar().addMenu("&Account")
+        self._sign_in_action = QAction("Sign In...", self)
+        self._sign_in_action.triggered.connect(self._on_sign_in_clicked)
+        account_menu.addAction(self._sign_in_action)
+        self._sign_out_action = QAction("Sign Out", self)
+        self._sign_out_action.setEnabled(False)
+        self._sign_out_action.triggered.connect(self._on_sign_out_clicked)
+        account_menu.addAction(self._sign_out_action)
 
         help_menu: QMenu = self.menuBar().addMenu("&Help")
         about_action = QAction("&About", self)
@@ -285,6 +308,15 @@ class MainWindow(QMainWindow):
     def _create_preview_panel(self) -> QWidget:
         panel = QGroupBox("Playlist Preview")
         layout = QVBoxLayout(panel)
+        name_row = QHBoxLayout()
+        name_row.addWidget(QLabel("Playlist Name", panel))
+        self._playlist_name_input = QLineEdit(panel)
+        self._playlist_name_input.setObjectName("playlistNameInput")
+        self._playlist_name_input.setPlaceholderText("Enter playlist name")
+        self._playlist_name_input.textChanged.connect(self.playlistNameChanged.emit)
+        name_row.addWidget(self._playlist_name_input, 1)
+        layout.addLayout(name_row)
+
         self._preview_table = QTableView(panel)
         self._preview_table.setObjectName("playlistPreviewTable")
         self._preview_model = QStandardItemModel(0, 2, self)
@@ -296,6 +328,11 @@ class MainWindow(QMainWindow):
         self._preview_table.verticalHeader().setVisible(False)
         self._preview_table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self._preview_table)
+        self._publish_playlist_button = QPushButton("Publish to TIDAL", panel)
+        self._publish_playlist_button.setObjectName("publishPlaylistButton")
+        self._publish_playlist_button.setEnabled(False)
+        self._publish_playlist_button.clicked.connect(self._on_create_playlist_clicked)
+        layout.addWidget(self._publish_playlist_button)
         self.set_playlist_preview(
             playlist_name="-",
             album_count=0,
@@ -309,6 +346,8 @@ class MainWindow(QMainWindow):
     def _create_status_bar(self) -> None:
         status = QStatusBar(self)
         status.showMessage("Ready")
+        self._auth_status_label = QLabel("Not signed in", self)
+        status.addPermanentWidget(self._auth_status_label)
         self.setStatusBar(status)
 
     def _restore_settings(self) -> None:
@@ -414,6 +453,17 @@ class MainWindow(QMainWindow):
             return
         self.createPlaylistRequested.emit()
 
+    @Slot()
+    def _on_sign_in_clicked(self) -> None:
+        credentials = self._prompt_sign_in_credentials(self._authenticated_username)
+        if credentials is None:
+            return
+        self.signInRequested.emit(credentials[0], credentials[1])
+
+    @Slot()
+    def _on_sign_out_clicked(self) -> None:
+        self.signOutRequested.emit()
+
     def set_busy(self, busy: bool) -> None:
         """Set busy UI state for future worker integration."""
         self._is_busy = busy
@@ -429,6 +479,22 @@ class MainWindow(QMainWindow):
         """Enable/disable search action without changing business behavior."""
         self._search_enabled = enabled
         self._search_button.setEnabled(enabled and not self._is_busy)
+
+    def set_publish_ready(self, ready: bool) -> None:
+        self._publish_ready = ready
+        self._refresh_create_playlist_action_state()
+
+    def set_authentication_state(
+        self, *, authenticated: bool, username: str | None
+    ) -> None:
+        self._authenticated_username = username.strip() if username else None
+        self._sign_in_action.setEnabled(not authenticated)
+        self._sign_out_action.setEnabled(authenticated)
+        if authenticated:
+            display_name = self._authenticated_username or "Signed in"
+            self._auth_status_label.setText(display_name)
+        else:
+            self._auth_status_label.setText("Not signed in")
 
     def show_success_dialog(self, title: str, message: str) -> None:
         QMessageBox.information(self, title, message)
@@ -449,6 +515,53 @@ class MainWindow(QMainWindow):
             ),
         )
 
+    def _prompt_sign_in_credentials(
+        self, default_username: str | None
+    ) -> tuple[dict[str, str], bool] | None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Sign In to TIDAL")
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+
+        username_input = QLineEdit(dialog)
+        username_input.setObjectName("signInUsernameInput")
+        username_input.setText(default_username or "")
+
+        password_input = QLineEdit(dialog)
+        password_input.setObjectName("signInPasswordInput")
+        password_input.setEchoMode(QLineEdit.EchoMode.Password)
+
+        remember_checkbox = QCheckBox("Remember credentials securely", dialog)
+        remember_checkbox.setObjectName("rememberCredentialsCheckbox")
+        remember_checkbox.setChecked(True)
+
+        form.addRow("Username", username_input)
+        form.addRow("Password", password_input)
+        layout.addLayout(form)
+        layout.addWidget(remember_checkbox)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        username = username_input.text().strip()
+        password = password_input.text().strip()
+        if not username or not password:
+            self.show_error_dialog(
+                "Sign In Failed", "Username and password are required."
+            )
+            return None
+        return (
+            {"username": username, "password": password},
+            remember_checkbox.isChecked(),
+        )
+
     def _coerce_column_width(self, value: object) -> int | None:
         if isinstance(value, bool):
             return None
@@ -466,9 +579,12 @@ class MainWindow(QMainWindow):
         self.albumSelectionChanged.emit(checked_ids)
 
     def _refresh_create_playlist_action_state(self) -> None:
-        enabled = self._has_album_selection and not self._is_busy
+        enabled = (
+            self._has_album_selection and self._publish_ready and not self._is_busy
+        )
         self._create_playlist_action.setEnabled(enabled)
         self._create_playlist_menu_action.setEnabled(enabled)
+        self._publish_playlist_button.setEnabled(enabled)
 
     @Slot()
     def _on_filter_controls_changed(self, *_args: object) -> None:
@@ -582,6 +698,12 @@ class MainWindow(QMainWindow):
             field_item.setEditable(False)
             value_item.setEditable(False)
             self._preview_model.appendRow([field_item, value_item])
+
+    def playlist_name(self) -> str:
+        return self._playlist_name_input.text().strip()
+
+    def set_playlist_name(self, value: str) -> None:
+        self._playlist_name_input.setText(value)
 
     @property
     def album_table_model(self) -> AlbumTableModel:

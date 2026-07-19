@@ -19,6 +19,7 @@ class PlaylistBuildPlan:
     duplicates_skipped: int
     duration_seconds: int
     track_count: int
+    playlist_name: str | None = None
 
     def __post_init__(self) -> None:
         if not self.selected_albums:
@@ -29,3 +30,5 @@ class PlaylistBuildPlan:
             raise ValidationError("duration_seconds cannot be negative")
         if self.track_count < 0:
             raise ValidationError("track_count cannot be negative")
+        if self.playlist_name is not None and not self.playlist_name.strip():
+            raise ValidationError("playlist_name cannot be empty when provided")

@@ -37,10 +37,14 @@ class _FakeClient:
     album_response: list[dict[str, object]] = field(default_factory=list)
     track_response: list[dict[str, object]] = field(default_factory=list)
     artist_failures: list[Exception] = field(default_factory=list)
+    last_playlist_name: str | None = None
 
     def authenticate(self, credentials: dict[str, str]) -> str:
         self.auth_calls += 1
         return self.auth_token
+
+    def clear_authentication(self) -> None:
+        return None
 
     def search_artists(self, query: str, limit: int) -> list[dict[str, object]]:
         self.artist_calls += 1
@@ -59,6 +63,7 @@ class _FakeClient:
 
     def create_playlist(self, name: str, description: str) -> str:
         self.create_playlist_calls += 1
+        self.last_playlist_name = name
         return "playlist-1"
 
     def add_tracks_to_playlist(self, playlist_id: str, track_ids: list[str]) -> None:
@@ -260,3 +265,23 @@ def test_playlist_creation_success() -> None:
     assert playlist_id == "playlist-1"
     assert client.create_playlist_calls == 1
     assert client.add_tracks_calls == 1
+
+
+def test_playlist_creation_uses_custom_plan_name() -> None:
+    client = _FakeClient()
+    provider = _build_provider(client)
+    provider.authenticate({"token": "x"})
+
+    custom_plan = _plan()
+    custom_plan = PlaylistBuildPlan(
+        artist=custom_plan.artist,
+        selected_albums=custom_plan.selected_albums,
+        selected_tracks=custom_plan.selected_tracks,
+        duplicates_skipped=custom_plan.duplicates_skipped,
+        duration_seconds=custom_plan.duration_seconds,
+        track_count=custom_plan.track_count,
+        playlist_name="Road Trip Mix",
+    )
+    provider.create_playlist(custom_plan)
+
+    assert client.last_playlist_name == "Road Trip Mix"

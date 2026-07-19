@@ -109,6 +109,7 @@ class TidalProvider(IMusicProvider):
         self._rate_limiter = rate_limiter or RequestRateLimiter()
         self._sleeper = sleeper
         self._access_token: str | None = None
+        self._authenticated_username: str | None = None
 
         self._artist_repository = artist_repository or ArtistRepository(
             cache=self._cache,
@@ -137,6 +138,14 @@ class TidalProvider(IMusicProvider):
     def playlist_repository(self) -> PlaylistRepository:
         return self._playlist_repository
 
+    @property
+    def is_authenticated(self) -> bool:
+        return self._access_token is not None
+
+    @property
+    def authenticated_username(self) -> str | None:
+        return self._authenticated_username
+
     def authenticate(self, credentials: dict[str, str]) -> None:
         if not credentials:
             raise ValidationError("credentials cannot be empty")
@@ -146,8 +155,17 @@ class TidalProvider(IMusicProvider):
         if not token.strip():
             raise AuthenticationError("authentication returned empty token")
         self._access_token = token
+        username = credentials.get("username")
+        self._authenticated_username = username.strip() if username else None
         self._cache.clear()
         logger.info("Provider authentication succeeded")
+
+    def clear_authentication(self) -> None:
+        self._access_token = None
+        self._authenticated_username = None
+        clear_operation = getattr(self._api_client, "clear_authentication", None)
+        if callable(clear_operation):
+            clear_operation()
 
     def search_artists(self, query: str, limit: int = 10) -> list[Artist]:
         self._ensure_authenticated()
@@ -200,7 +218,11 @@ class TidalProvider(IMusicProvider):
             "Creating playlist shell",
         )
 
-        playlist_name = f"{plan.artist.name} Playlist"
+        playlist_name = (
+            plan.playlist_name.strip()
+            if plan.playlist_name and plan.playlist_name.strip()
+            else f"{plan.artist.name} Playlist"
+        )
         description = f"{plan.track_count} tracks from selected albums"
 
         try:

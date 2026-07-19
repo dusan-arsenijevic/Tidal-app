@@ -9,6 +9,9 @@ class TidalApiClient(Protocol):
     def authenticate(self, credentials: dict[str, str]) -> str:
         """Authenticate and return token."""
 
+    def clear_authentication(self) -> None:
+        """Clear auth tokens from the transport."""
+
     def search_artists(self, query: str, limit: int) -> list[dict[str, object]]:
         """Search artists."""
 

@@ -1,10 +1,15 @@
 """Workflow orchestration for GUI interactions."""
 
+from dataclasses import replace
 import logging
 
 from PySide6.QtCore import QObject, Signal
 
-from tidal_playlist_builder.exceptions import DuplicateDetectionError, ValidationError
+from tidal_playlist_builder.exceptions import (
+    CredentialStorageError,
+    DuplicateDetectionError,
+    ValidationError,
+)
 from tidal_playlist_builder.gui import MainWindow
 from tidal_playlist_builder.gui.models import AlbumFilterProxyModel, AlbumTableModel
 from tidal_playlist_builder.model import (
@@ -13,11 +18,15 @@ from tidal_playlist_builder.model import (
     DuplicateGroup,
     PlaylistBuildPlan,
 )
-from tidal_playlist_builder.services import PlaylistBuildPlanBuilder
+from tidal_playlist_builder.services import (
+    KeyringCredentialStore,
+    PlaylistBuildPlanBuilder,
+)
 from tidal_playlist_builder.threading import WorkerThreadPool
 from tidal_playlist_builder.threading.workers import (
     AlbumLoadingWorker,
     ArtistSearchWorker,
+    BaseWorker,
     DuplicateDetectionWorker,
     PlaylistCreationWorker,
 )
@@ -46,6 +55,7 @@ class WorkflowController(QObject):
         playlist_builder: PlaylistBuildPlanBuilder,
         album_table_model: AlbumTableModel,
         album_proxy_model: AlbumFilterProxyModel,
+        credential_store: KeyringCredentialStore | None = None,
     ) -> None:
         super().__init__(main_window)
         self._window = main_window
@@ -54,6 +64,7 @@ class WorkflowController(QObject):
         self._playlist_builder = playlist_builder
         self._table_model = album_table_model
         self._proxy_model = album_proxy_model
+        self._credential_store = credential_store or KeyringCredentialStore()
 
         self._current_artist: Artist | None = None
         self._current_albums: list[Album] = []
@@ -62,14 +73,26 @@ class WorkflowController(QObject):
         self._active_workers: set[object] = set()
         self._playlist_cancel_token: CancellationToken | None = None
         self._playlist_creation_running = False
+        self._current_preview_plan: PlaylistBuildPlan | None = None
 
         self._window.searchRequested.connect(self._on_search_requested)
         self._window.refreshRequested.connect(self._on_refresh_requested)
         self._window.createPlaylistRequested.connect(
             self.create_playlist_from_selection
         )
+        self._window.signInRequested.connect(self._on_sign_in_requested)
+        self._window.signOutRequested.connect(self._on_sign_out_requested)
         self._window.albumSelectionChanged.connect(self._on_album_selection_changed)
-        self._window.set_search_enabled(True)
+        self._window.playlistNameChanged.connect(
+            lambda _name: self._refresh_playlist_preview()
+        )
+        self._window.set_search_enabled(self._provider.is_authenticated)
+        self._window.set_authentication_state(
+            authenticated=self._provider.is_authenticated,
+            username=self._provider.authenticated_username,
+        )
+        if not self._provider.is_authenticated:
+            self._window.set_status("Sign in from Account menu to start.")
         self._refresh_playlist_preview()
 
     def create_playlist_from_selection(self) -> None:
@@ -77,21 +100,14 @@ class WorkflowController(QObject):
         if self._playlist_creation_running:
             self._window.set_status("Playlist creation already running")
             return
-        if self._current_artist is None:
-            self._window.set_status("No artist loaded")
+        if not self._provider.is_authenticated:
+            self._window.set_status("Sign in to TIDAL before publishing.")
+            return
+        if self._current_preview_plan is None:
+            self._window.set_status("No publishable playlist preview.")
             return
 
-        selected_ids = set(self._table_model.checked_album_ids())
-        selected_albums = [a for a in self._current_albums if a.id in selected_ids]
-        if not selected_albums:
-            self._window.set_status("No albums selected")
-            return
-
-        try:
-            plan = self._playlist_builder.build(self._current_artist, selected_albums)
-        except ValidationError as error:
-            self._handle_error(str(error))
-            return
+        plan = self._plan_for_publish(self._current_preview_plan)
 
         self._playlist_cancel_token = CancellationToken()
         self._playlist_creation_running = True
@@ -114,12 +130,18 @@ class WorkflowController(QObject):
             self._window.set_status("Cancelling playlist creation...")
 
     def _on_search_requested(self, query: str) -> None:
+        if not self._provider.is_authenticated:
+            self._window.set_status("Sign in to TIDAL before searching.")
+            return
         worker = self._worker_pool.start_artist_search(
             self._provider.search_artists, query, 10
         )
         self._connect_artist_search_worker(worker)
 
     def _on_refresh_requested(self) -> None:
+        if not self._provider.is_authenticated:
+            self._window.set_status("Sign in to TIDAL before refreshing.")
+            return
         artist = self._current_artist
         if artist is None:
             self._window.set_status("No artist selected")
@@ -128,6 +150,26 @@ class WorkflowController(QObject):
             self._load_artist_discography, artist.id
         )
         self._connect_album_loading_worker(worker, artist)
+
+    def _on_sign_in_requested(
+        self, credentials: dict[str, str], remember: bool
+    ) -> None:
+        worker = BaseWorker(
+            lambda: self._authenticate_and_optionally_persist(credentials, remember)
+        )
+        self._retain_worker(worker)
+        worker.signals.started.connect(lambda: self._start_operation("Signing in..."))
+        worker.signals.error.connect(self._handle_error)
+        worker.signals.result.connect(self._on_sign_in_succeeded)
+        worker.signals.finished.connect(self._finish_operation)
+        self._worker_pool.start_worker(worker)
+
+    def _on_sign_out_requested(self) -> None:
+        self._provider.clear_authentication()
+        self._window.set_search_enabled(False)
+        self._window.set_authentication_state(authenticated=False, username=None)
+        self._window.set_publish_ready(False)
+        self._window.set_status("Signed out.")
 
     def _connect_artist_search_worker(self, worker: ArtistSearchWorker) -> None:
         self._retain_worker(worker)
@@ -205,6 +247,7 @@ class WorkflowController(QObject):
         typed_albums = list(albums)
         self._current_artist = artist
         self._current_albums = typed_albums
+        self._window.set_playlist_name(f"{artist.name} Playlist")
         self._table_model.set_albums(typed_albums)
         self._refresh_playlist_preview()
         worker = self._worker_pool.start_duplicate_detection(
@@ -320,7 +363,9 @@ class WorkflowController(QObject):
 
     def _refresh_playlist_preview(self) -> None:
         artist = self._current_artist
+        self._current_preview_plan = None
         if artist is None:
+            self._window.set_publish_ready(False)
             self._window.set_playlist_preview(
                 playlist_name="-",
                 album_count=0,
@@ -333,8 +378,9 @@ class WorkflowController(QObject):
 
         selected_ids = set(self._table_model.checked_album_ids())
         selected_albums = [a for a in self._current_albums if a.id in selected_ids]
-        playlist_name = f"{artist.name} Playlist"
+        playlist_name = self._effective_playlist_name(artist)
         if not selected_albums:
+            self._window.set_publish_ready(False)
             self._window.set_playlist_preview(
                 playlist_name=playlist_name,
                 album_count=0,
@@ -348,6 +394,7 @@ class WorkflowController(QObject):
         try:
             plan = self._playlist_builder.build(artist, selected_albums)
         except ValidationError as error:
+            self._window.set_publish_ready(False)
             self._window.set_playlist_preview(
                 playlist_name=playlist_name,
                 album_count=len(selected_albums),
@@ -358,6 +405,12 @@ class WorkflowController(QObject):
             )
             return
 
+        self._current_preview_plan = plan
+        self._window.set_publish_ready(
+            self._provider.is_authenticated
+            and plan.track_count > 0
+            and bool(playlist_name)
+        )
         self._window.set_playlist_preview(
             playlist_name=playlist_name,
             album_count=len(plan.selected_albums),
@@ -366,6 +419,63 @@ class WorkflowController(QObject):
             duplicate_summary=f"{plan.duplicates_skipped} duplicate tracks skipped",
             validation_warnings=[],
         )
+
+    def _authenticate_and_optionally_persist(
+        self, credentials: dict[str, str], remember: bool
+    ) -> tuple[str | None, str | None]:
+        self._provider.authenticate(credentials)
+        warning: str | None = None
+        if remember:
+            username = str(credentials.get("username", "")).strip()
+            password = str(credentials.get("password", "")).strip()
+            try:
+                self._credential_store.save(username=username, password=password)
+            except CredentialStorageError:
+                warning = (
+                    "Signed in, but secure credential storage is unavailable. "
+                    "Credentials were not saved."
+                )
+        else:
+            try:
+                self._credential_store.clear()
+            except CredentialStorageError:
+                warning = "Signed in, but clearing saved credentials failed."
+        username_value = str(credentials.get("username", "")).strip()
+        return (username_value or None), warning
+
+    def _on_sign_in_succeeded(self, result: object) -> None:
+        username: str | None = None
+        warning: str | None = None
+        if (
+            isinstance(result, tuple)
+            and len(result) == 2
+            and (isinstance(result[0], str) or result[0] is None)
+            and (isinstance(result[1], str) or result[1] is None)
+        ):
+            username = result[0]
+            warning = result[1]
+        self._window.set_search_enabled(True)
+        self._window.set_authentication_state(authenticated=True, username=username)
+        self._refresh_playlist_preview()
+        if warning:
+            self.operationFailed.emit(warning)
+            self._window.set_status(warning)
+            return
+        self._window.set_status("Signed in.")
+
+    def _effective_playlist_name(self, artist: Artist) -> str:
+        configured_name = self._window.playlist_name()
+        if configured_name:
+            return configured_name
+        default_name = f"{artist.name} Playlist"
+        self._window.set_playlist_name(default_name)
+        return default_name
+
+    def _plan_for_publish(self, plan: PlaylistBuildPlan) -> PlaylistBuildPlan:
+        playlist_name = self._window.playlist_name()
+        if not playlist_name:
+            return plan
+        return replace(plan, playlist_name=playlist_name)
 
     def _format_duration(self, seconds: int) -> str:
         hours = seconds // 3600

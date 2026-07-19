@@ -33,6 +33,10 @@ class CacheError(TidalPlaylistBuilderError):
     """Raised for cache-layer failures."""
 
 
+class CredentialStorageError(TidalPlaylistBuilderError):
+    """Raised when secure credential storage operations fail."""
+
+
 class PlaylistCreationError(ProviderError):
     """Raised for playlist creation workflow failures."""
 

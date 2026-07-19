@@ -70,6 +70,8 @@ def main() -> int:
             "tidal_playlist_builder.resources",
             "--hidden-import",
             "requests",
+            "--hidden-import",
+            "keyring",
             "--distpath",
             str(paths.dist),
             "--workpath",

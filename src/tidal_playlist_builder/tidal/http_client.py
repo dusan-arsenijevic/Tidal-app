@@ -92,6 +92,11 @@ class HttpTidalApiClient:
         logger.info("Authentication succeeded")
         return token
 
+    def clear_authentication(self) -> None:
+        self._access_token = None
+        self._refresh_token = None
+        self._access_token_expires_at = None
+
     def search_artists(self, query: str, limit: int) -> list[dict[str, object]]:
         payload = self._request_json(
             "GET",
