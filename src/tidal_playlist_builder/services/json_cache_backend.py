@@ -8,7 +8,7 @@ import json
 import logging
 from pathlib import Path
 import threading
-from time import time
+from time import sleep, time
 from typing import Literal
 from uuid import uuid4
 
@@ -43,6 +43,7 @@ class JsonCacheBackend:
         with self._lock:
             file_path = self._file_path_for_key(key)
             if not file_path.exists():
+                logger.debug("Disk cache miss key=%s", key)
                 return ("miss", None, None)
 
             payload = self._load_file(file_path)
@@ -52,6 +53,7 @@ class JsonCacheBackend:
             expires_at = payload.get("expires_at")
             if isinstance(expires_at, (int, float)) and expires_at <= self._now():
                 self._delete_file(file_path)
+                logger.debug("Disk cache expired key=%s", key)
                 return ("expired", None, None)
 
             serialized = payload.get("value")
@@ -59,10 +61,12 @@ class JsonCacheBackend:
                 value = self._deserialize(serialized)
             except CacheError:
                 self._delete_file(file_path)
+                logger.warning("Disk cache corrupt key=%s", key)
                 return ("corrupt", None, None)
             disk_expires_at = (
                 expires_at if isinstance(expires_at, (int, float)) else None
             )
+            logger.debug("Disk cache hit key=%s", key)
             return ("hit", value, disk_expires_at)
 
     def set(self, key: str, value: object, expires_at: float | None) -> None:
@@ -80,6 +84,7 @@ class JsonCacheBackend:
                 "value": serialized_value,
             }
             self._atomic_write_json(file_path, payload)
+            logger.debug("Disk cache write key=%s", key)
 
     def invalidate(self, prefix: str) -> None:
         with self._lock:
@@ -90,16 +95,23 @@ class JsonCacheBackend:
                 key = payload.get("key")
                 if isinstance(key, str) and key.startswith(prefix):
                     self._delete_file(file_path)
+            logger.debug("Disk cache invalidated prefix=%s", prefix)
 
     def clear(self) -> None:
         with self._lock:
             for file_path in self._cache_directory.rglob("*.json"):
                 self._delete_file(file_path)
+            logger.debug("Disk cache cleared")
 
     def _ensure_directories(self) -> None:
-        self._cache_directory.mkdir(parents=True, exist_ok=True)
-        for category in _CATEGORY_NAMES:
-            (self._cache_directory / category).mkdir(parents=True, exist_ok=True)
+        try:
+            self._cache_directory.mkdir(parents=True, exist_ok=True)
+            for category in _CATEGORY_NAMES:
+                (self._cache_directory / category).mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            raise CacheError(
+                f"Failed to initialize cache directory: {self._cache_directory}"
+            ) from error
 
     def _file_path_for_key(self, key: str) -> Path:
         category_dir = self._cache_directory / self._category_for_key(key)
@@ -138,12 +150,22 @@ class JsonCacheBackend:
         try:
             with temp_path.open("w", encoding="utf-8") as handle:
                 json.dump(payload, handle, separators=(",", ":"))
-            temp_path.replace(file_path)
+            self._replace_with_retry(temp_path, file_path)
         except OSError as error:
             raise CacheError(f"Failed to write cache file: {file_path}") from error
         finally:
             if temp_path.exists():
                 self._delete_file(temp_path)
+
+    def _replace_with_retry(self, source: Path, target: Path) -> None:
+        for attempt in range(3):
+            try:
+                source.replace(target)
+                return
+            except OSError:
+                if attempt >= 2:
+                    raise
+                sleep(0.005)
 
     def _delete_file(self, file_path: Path) -> None:
         try:

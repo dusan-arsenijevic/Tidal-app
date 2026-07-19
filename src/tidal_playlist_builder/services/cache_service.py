@@ -87,12 +87,16 @@ class CacheService:
             keys = [key for key in self._memory if key.startswith(prefix)]
             for key in keys:
                 del self._memory[key]
+            logger.debug(
+                "Cache invalidated prefix=%s removed_memory_keys=%s", prefix, len(keys)
+            )
             if self._disk is not None:
                 self._disk.invalidate(prefix)
 
     def clear(self) -> None:
         with self._lock:
             self._memory.clear()
+            logger.debug("Cache cleared level=memory")
             if self._disk is not None:
                 self._disk.clear()
 

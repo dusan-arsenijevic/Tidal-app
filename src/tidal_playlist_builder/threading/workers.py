@@ -1,6 +1,7 @@
 """Background worker framework built on QRunnable and signals."""
 
 from collections.abc import Callable
+import logging
 from typing import Generic, TypeVar
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
@@ -14,6 +15,7 @@ from tidal_playlist_builder.model import (
 )
 
 ResultT = TypeVar("ResultT", covariant=True)
+logger = logging.getLogger(__name__)
 
 
 class WorkerSignals(QObject):
@@ -38,13 +40,16 @@ class BaseWorker(QRunnable, Generic[ResultT]):
 
     @Slot()
     def run(self) -> None:
+        logger.debug("Worker started worker=%s", type(self).__name__)
         self.signals.started.emit()
         try:
             result = self._operation()
             self.signals.result.emit(result)
         except Exception as error:  # pragma: no cover - Qt entrypoint safety
+            logger.exception("Worker failed worker=%s", type(self).__name__)
             self.signals.error.emit(str(error))
         finally:
+            logger.debug("Worker finished worker=%s", type(self).__name__)
             self.signals.finished.emit()
 
 

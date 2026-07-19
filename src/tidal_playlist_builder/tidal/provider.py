@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 import logging
 from time import monotonic, sleep
-from typing import Protocol, TypeVar
+from typing import TypeVar
 
 from tidal_playlist_builder.exceptions import (
     AuthenticationError,
@@ -20,35 +20,12 @@ from tidal_playlist_builder.repositories import (
 from tidal_playlist_builder.services.cache_service import CacheService
 from tidal_playlist_builder.services.interfaces import IMusicProvider
 
+from .api_client import TidalApiClient
+
 ResponseT = TypeVar("ResponseT")
 ProgressCallback = Callable[["PlaylistCreationProgress"], None]
 
 logger = logging.getLogger(__name__)
-
-
-class _TidalApiClient(Protocol):
-    """Minimal API client contract used by TidalProvider."""
-
-    def authenticate(self, credentials: dict[str, str]) -> str:
-        """Authenticate and return token."""
-
-    def search_artists(self, query: str, limit: int) -> list[dict[str, object]]:
-        """Search artists."""
-
-    def get_artist_albums(self, artist_id: str) -> list[dict[str, object]]:
-        """Retrieve artist albums."""
-
-    def get_album_tracks(self, album_id: str) -> list[dict[str, object]]:
-        """Retrieve album tracks."""
-
-    def create_playlist(self, name: str, description: str) -> str:
-        """Create playlist and return id."""
-
-    def add_tracks_to_playlist(self, playlist_id: str, track_ids: list[str]) -> None:
-        """Append tracks to playlist."""
-
-    def delete_playlist(self, playlist_id: str) -> None:
-        """Delete playlist by id."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,8 +86,11 @@ class TidalProvider(IMusicProvider):
 
     def __init__(
         self,
-        api_client: _TidalApiClient,
+        api_client: TidalApiClient,
         cache_service: CacheService | None = None,
+        artist_repository: ArtistRepository | None = None,
+        album_repository: AlbumRepository | None = None,
+        playlist_repository: PlaylistRepository | None = None,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.1,
         retry_on: tuple[type[Exception], ...] = (TimeoutError, ConnectionError),
@@ -130,32 +110,32 @@ class TidalProvider(IMusicProvider):
         self._sleeper = sleeper
         self._access_token: str | None = None
 
-        self._artist_repository = ArtistRepository(
+        self._artist_repository = artist_repository or ArtistRepository(
             cache=self._cache,
-            search_operation=lambda query, limit: self._execute_with_resilience(
-                lambda: self._api_client.search_artists(query, limit)
-            ),
+            search_operation=self._api_client.search_artists,
         )
-        self._album_repository = AlbumRepository(
+        self._album_repository = album_repository or AlbumRepository(
             cache=self._cache,
-            album_operation=lambda artist_id: self._execute_with_resilience(
-                lambda: self._api_client.get_artist_albums(artist_id)
-            ),
-            track_operation=lambda album_id: self._execute_with_resilience(
-                lambda: self._api_client.get_album_tracks(album_id)
-            ),
+            album_operation=self._api_client.get_artist_albums,
+            track_operation=self._api_client.get_album_tracks,
         )
-        self._playlist_repository = PlaylistRepository(
-            create_operation=lambda name, description: self._execute_with_resilience(
-                lambda: self._api_client.create_playlist(name, description)
-            ),
-            add_tracks_operation=lambda playlist_id, track_ids: self._execute_with_resilience(
-                lambda: self._api_client.add_tracks_to_playlist(playlist_id, track_ids)
-            ),
-            delete_operation=lambda playlist_id: self._execute_with_resilience(
-                lambda: self._api_client.delete_playlist(playlist_id)
-            ),
+        self._playlist_repository = playlist_repository or PlaylistRepository(
+            create_operation=self._api_client.create_playlist,
+            add_tracks_operation=self._api_client.add_tracks_to_playlist,
+            delete_operation=self._api_client.delete_playlist,
         )
+
+    @property
+    def artist_repository(self) -> ArtistRepository:
+        return self._artist_repository
+
+    @property
+    def album_repository(self) -> AlbumRepository:
+        return self._album_repository
+
+    @property
+    def playlist_repository(self) -> PlaylistRepository:
+        return self._playlist_repository
 
     def authenticate(self, credentials: dict[str, str]) -> None:
         if not credentials:
@@ -167,6 +147,7 @@ class TidalProvider(IMusicProvider):
             raise AuthenticationError("authentication returned empty token")
         self._access_token = token
         self._cache.clear()
+        logger.info("Provider authentication succeeded")
 
     def search_artists(self, query: str, limit: int = 10) -> list[Artist]:
         self._ensure_authenticated()
@@ -174,19 +155,25 @@ class TidalProvider(IMusicProvider):
             raise ValidationError("query cannot be empty")
         if limit <= 0:
             raise ValidationError("limit must be positive")
-        return self._artist_repository.search(query, limit)
+        return self._execute_with_resilience(
+            lambda: self._artist_repository.search(query, limit)
+        )
 
     def get_artist_albums(self, artist_id: str) -> list[Album]:
         self._ensure_authenticated()
         if not artist_id.strip():
             raise ValidationError("artist_id cannot be empty")
-        return self._album_repository.get_artist_albums(artist_id)
+        return self._execute_with_resilience(
+            lambda: self._album_repository.get_artist_albums(artist_id)
+        )
 
     def get_album_tracks(self, album_id: str) -> list[Track]:
         self._ensure_authenticated()
         if not album_id.strip():
             raise ValidationError("album_id cannot be empty")
-        return self._album_repository.get_album_tracks(album_id)
+        return self._execute_with_resilience(
+            lambda: self._album_repository.get_album_tracks(album_id)
+        )
 
     def create_playlist(
         self,
@@ -217,8 +204,10 @@ class TidalProvider(IMusicProvider):
         description = f"{plan.track_count} tracks from selected albums"
 
         try:
-            playlist_id = self._playlist_repository.create_playlist(
-                playlist_name, description
+            playlist_id = self._execute_with_resilience(
+                lambda: self._playlist_repository.create_playlist(
+                    playlist_name, description
+                )
             )
             logger.info("Created playlist shell '%s' (%s)", playlist_name, playlist_id)
             self._emit_progress(
@@ -232,7 +221,9 @@ class TidalProvider(IMusicProvider):
             completed = 0
             for chunk in self._chunk_track_ids(track_ids, batch_size):
                 self._check_cancelled(token, "adding_tracks")
-                self._playlist_repository.add_tracks(playlist_id, chunk)
+                self._execute_with_resilience(
+                    lambda: self._playlist_repository.add_tracks(playlist_id, chunk)
+                )
                 completed += len(chunk)
                 logger.debug(
                     "Added %s tracks to playlist %s (completed=%s/%s)",
@@ -273,7 +264,9 @@ class TidalProvider(IMusicProvider):
         if playlist_id is None:
             return
         try:
-            self._playlist_repository.delete_playlist(playlist_id)
+            self._execute_with_resilience(
+                lambda: self._playlist_repository.delete_playlist(playlist_id)
+            )
             logger.info(
                 "Recovered by deleting partially created playlist %s", playlist_id
             )
@@ -293,6 +286,7 @@ class TidalProvider(IMusicProvider):
 
     def _check_cancelled(self, token: CancellationToken, phase: str) -> None:
         if token.is_cancelled:
+            logger.warning("Playlist creation cancelled phase=%s", phase)
             raise PlaylistCreationCancelledError(
                 f"Playlist creation cancelled during {phase}"
             )

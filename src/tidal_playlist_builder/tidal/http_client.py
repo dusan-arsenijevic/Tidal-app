@@ -256,22 +256,27 @@ class HttpTidalApiClient:
                 if attempt >= self._config.max_retries:
                     raise RateLimitError("Rate limited and retry budget exhausted")
                 delay = self._rate_limit_delay(retry_after_header, attempt)
-                logger.info("Retrying after rate limit path=%s delay=%s", path, delay)
+                logger.warning(
+                    "Retrying after rate limit path=%s delay=%s", path, delay
+                )
                 self._sleeper(delay)
                 continue
 
             if status >= 500:
+                logger.warning("HTTP server error status=%s path=%s", status, path)
                 if attempt >= self._config.max_retries:
                     raise ProviderError(f"Server error status={status}")
                 self._sleep_for_retry(attempt, reason=f"status_{status}")
                 continue
 
             if status >= 400:
+                logger.warning("HTTP client error status=%s path=%s", status, path)
                 raise ProviderError(f"HTTP error status={status}")
 
             try:
                 return response.json()
             except ValueError as error:
+                logger.warning("Invalid JSON response path=%s", path)
                 raise ProviderError("Invalid JSON response payload") from error
 
         raise ProviderError("HTTP request failed unexpectedly")
@@ -382,7 +387,7 @@ class HttpTidalApiClient:
         delay = self._retry_delay(attempt)
         if delay <= 0:
             return
-        logger.info("Retrying request reason=%s delay=%s", reason, delay)
+        logger.debug("Retrying request reason=%s delay=%s", reason, delay)
         self._sleeper(delay)
 
     def _retry_delay(self, attempt: int) -> float:

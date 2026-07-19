@@ -4,9 +4,24 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QGroupBox, QLineEdit, QPushButton, QSplitter, QTableView
+from PySide6.QtWidgets import (
+    QComboBox,
+    QGroupBox,
+    QLineEdit,
+    QPushButton,
+    QSpinBox,
+    QSplitter,
+    QTableView,
+)
 
 from tidal_playlist_builder.gui import MainWindow
+from tidal_playlist_builder.__about__ import (
+    APP_NAME,
+    COPYRIGHT,
+    LICENSE_NAME,
+    PROJECT_URL,
+    __version__,
+)
 from tidal_playlist_builder.gui.models import (
     AlbumColumn,
     AlbumFilterProxyModel,
@@ -18,6 +33,8 @@ from tidal_playlist_builder.model import (
     AlbumType,
     Artist,
     AudioQuality,
+    DuplicateStatus,
+    FilterCriteria,
     Track,
 )
 
@@ -27,19 +44,71 @@ def _settings(tmp_path: Path) -> QSettings:
     return QSettings(str(settings_file), QSettings.Format.IniFormat)
 
 
-def test_window_constructs_with_mock_data(qtbot, tmp_path: Path) -> None:
-    window = MainWindow(settings=_settings(tmp_path))
+def _model() -> AlbumTableModel:
+    artist = Artist(id="artist:1", name="Massive Attack")
+    return AlbumTableModel(
+        [
+            Album(
+                id="album:1",
+                title="Mezzanine",
+                artist=artist,
+                release_year=1998,
+                album_type=AlbumType.ALBUM,
+                edition=AlbumEdition.ORIGINAL,
+                quality=AudioQuality.LOSSLESS,
+                is_explicit=False,
+                tracks=(Track(id="track:1", title="Angel", duration_seconds=390),),
+            )
+        ]
+    )
+
+
+def _model_with_two_albums() -> AlbumTableModel:
+    artist = Artist(id="artist:1", name="Massive Attack")
+    return AlbumTableModel(
+        [
+            Album(
+                id="album:1",
+                title="Mezzanine",
+                artist=artist,
+                release_year=1998,
+                album_type=AlbumType.ALBUM,
+                edition=AlbumEdition.ORIGINAL,
+                quality=AudioQuality.LOSSLESS,
+                is_explicit=False,
+                tracks=(Track(id="track:1", title="Angel", duration_seconds=390),),
+            ),
+            Album(
+                id="album:2",
+                title="Blue Lines",
+                artist=artist,
+                release_year=1991,
+                album_type=AlbumType.EP,
+                edition=AlbumEdition.DELUXE,
+                quality=AudioQuality.LOSSY,
+                is_explicit=True,
+                tracks=(
+                    Track(id="track:2", title="Safe from Harm", duration_seconds=300),
+                ),
+            ),
+        ]
+    )
+
+
+def test_window_constructs(qtbot, tmp_path: Path) -> None:
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
     qtbot.addWidget(window)
     window.show()
 
-    assert window.windowTitle() == "Tidal Playlist Builder"
-    assert window.album_table_model.rowCount() > 0
+    assert window.windowTitle() == APP_NAME
+    assert not window.windowIcon().isNull()
+    assert window.album_table_model.rowCount() == 1
     assert window.statusBar() is not None
     assert window.centralWidget() is not None
 
 
 def test_splitter_and_panels_created(qtbot, tmp_path: Path) -> None:
-    window = MainWindow(settings=_settings(tmp_path))
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
     qtbot.addWidget(window)
     window.show()
 
@@ -52,7 +121,7 @@ def test_splitter_and_panels_created(qtbot, tmp_path: Path) -> None:
 
 
 def test_model_attachment(qtbot, tmp_path: Path) -> None:
-    window = MainWindow(settings=_settings(tmp_path))
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
     qtbot.addWidget(window)
     window.show()
 
@@ -65,7 +134,7 @@ def test_model_attachment(qtbot, tmp_path: Path) -> None:
 
 def test_settings_persistence_on_close(qtbot, tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    window = MainWindow(settings=settings)
+    window = MainWindow(settings=settings, album_table_model=_model())
     qtbot.addWidget(window)
     window.show()
 
@@ -88,7 +157,7 @@ def test_settings_persistence_on_close(qtbot, tmp_path: Path) -> None:
 
 def test_settings_restoration(qtbot, tmp_path: Path) -> None:
     settings = _settings(tmp_path)
-    first = MainWindow(settings=settings)
+    first = MainWindow(settings=settings, album_table_model=_model())
     qtbot.addWidget(first)
     first.show()
     first.resize(1024, 700)
@@ -97,7 +166,7 @@ def test_settings_restoration(qtbot, tmp_path: Path) -> None:
     first.album_table.setColumnWidth(AlbumColumn.TRACKS, 123)
     first.close()
 
-    restored = MainWindow(settings=settings)
+    restored = MainWindow(settings=settings, album_table_model=_model())
     qtbot.addWidget(restored)
     restored.show()
 
@@ -137,7 +206,7 @@ def test_model_can_be_injected(qtbot, tmp_path: Path) -> None:
 
 
 def test_search_signal_emits_user_intent(qtbot, tmp_path: Path) -> None:
-    window = MainWindow(settings=_settings(tmp_path))
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
     qtbot.addWidget(window)
     window.show()
     window.set_search_enabled(True)
@@ -163,7 +232,7 @@ def test_search_signal_emits_user_intent(qtbot, tmp_path: Path) -> None:
 
 
 def test_refresh_signal_emits_user_intent(qtbot, tmp_path: Path) -> None:
-    window = MainWindow(settings=_settings(tmp_path))
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
     qtbot.addWidget(window)
     window.show()
 
@@ -179,7 +248,7 @@ def test_refresh_signal_emits_user_intent(qtbot, tmp_path: Path) -> None:
 
 
 def test_busy_and_status_api_updates_ui_only(qtbot, tmp_path: Path) -> None:
-    window = MainWindow(settings=_settings(tmp_path))
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
     qtbot.addWidget(window)
     window.show()
     window.set_search_enabled(True)
@@ -203,3 +272,170 @@ def test_busy_and_status_api_updates_ui_only(qtbot, tmp_path: Path) -> None:
 
     window.set_busy(False)
     assert search_button.isEnabled()
+
+
+def test_create_playlist_action_state_depends_on_selection_and_busy(
+    qtbot, tmp_path: Path
+) -> None:
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
+    qtbot.addWidget(window)
+    window.show()
+
+    create_actions = [
+        action
+        for action in window.findChildren(QAction)
+        if action.text() == "Create Playlist"
+    ]
+    assert len(create_actions) >= 1
+    assert all(not action.isEnabled() for action in create_actions)
+
+    window.album_table_model.set_row_checked(0, True)
+    assert all(action.isEnabled() for action in create_actions)
+
+    window.set_busy(True)
+    assert all(not action.isEnabled() for action in create_actions)
+
+    window.set_busy(False)
+    assert all(action.isEnabled() for action in create_actions)
+
+
+def test_create_playlist_action_emits_user_intent(qtbot, tmp_path: Path) -> None:
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
+    qtbot.addWidget(window)
+    window.show()
+
+    window.album_table_model.set_row_checked(0, True)
+    emitted: list[bool] = []
+    window.createPlaylistRequested.connect(lambda: emitted.append(True))
+    create_action = next(
+        action
+        for action in window.findChildren(QAction)
+        if action.text() == "Create Playlist"
+    )
+    create_action.trigger()
+
+    assert emitted == [True]
+
+
+def test_filter_controls_update_proxy_immediately(qtbot, tmp_path: Path) -> None:
+    window = MainWindow(
+        settings=_settings(tmp_path), album_table_model=_model_with_two_albums()
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    search_filter = window.findChild(QLineEdit, "filterSearchInput")
+    album_type_filter = window.findChild(QComboBox, "albumTypeFilter")
+    assert search_filter is not None
+    assert album_type_filter is not None
+
+    search_filter.setText("blue")
+    assert window.album_proxy_model.rowCount() == 1
+
+    # Reset search and filter by album type (EP)
+    search_filter.setText("")
+    album_type_filter.setCurrentIndex(2)  # EP
+    criteria = window.album_proxy_model.filter_criteria()
+    assert criteria.album_types == frozenset({AlbumType.EP})
+    assert window.album_proxy_model.rowCount() == 1
+
+
+def test_filter_settings_persist_and_restore(qtbot, tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    first = MainWindow(settings=settings, album_table_model=_model_with_two_albums())
+    qtbot.addWidget(first)
+    first.show()
+
+    duplicate_filter = first.findChild(QComboBox, "duplicateStatusFilter")
+    year_min_filter = first.findChild(QSpinBox, "yearMinFilter")
+    explicit_filter = first.findChild(QComboBox, "explicitFilter")
+    search_filter = first.findChild(QLineEdit, "filterSearchInput")
+    assert duplicate_filter is not None
+    assert year_min_filter is not None
+    assert explicit_filter is not None
+    assert search_filter is not None
+
+    duplicate_filter.setCurrentIndex(2)  # Variants only
+    year_min_filter.setValue(1995)
+    explicit_filter.setCurrentIndex(2)  # Explicit only
+    search_filter.setText("blue")
+    first.close()
+
+    restored = MainWindow(settings=settings, album_table_model=_model_with_two_albums())
+    qtbot.addWidget(restored)
+    restored.show()
+
+    restored_criteria = restored.album_proxy_model.filter_criteria()
+    assert restored_criteria.duplicate_status == DuplicateStatus.VARIANTS_ONLY
+    assert restored_criteria.release_year_min == 1995
+    assert restored_criteria.explicit is True
+    assert restored_criteria.search_text == "blue"
+
+
+def test_filter_changes_preserve_checked_albums(qtbot, tmp_path: Path) -> None:
+    window = MainWindow(
+        settings=_settings(tmp_path), album_table_model=_model_with_two_albums()
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    window.album_table_model.set_row_checked(1, True)
+    assert window.album_table_model.checked_album_ids() == ["album:2"]
+
+    window.album_proxy_model.set_filter_criteria(FilterCriteria(search_text="mezz"))
+    assert window.album_proxy_model.rowCount() == 1
+    assert window.album_table_model.checked_album_ids() == ["album:2"]
+
+
+def test_playlist_preview_updates_rows(qtbot, tmp_path: Path) -> None:
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
+    qtbot.addWidget(window)
+    window.show()
+
+    window.set_playlist_preview(
+        playlist_name="Massive Attack Playlist",
+        album_count=2,
+        track_count=30,
+        estimated_duration="1:52:40",
+        duplicate_summary="4 duplicate tracks skipped",
+        validation_warnings=["Select at least one album"],
+    )
+
+    preview_table = window.findChild(QTableView, "playlistPreviewTable")
+    assert preview_table is not None
+    model = preview_table.model()
+    assert model is not None
+    assert model.rowCount() == 6
+    assert model.index(0, 1).data() == "Massive Attack Playlist"
+    assert model.index(1, 1).data() == "2"
+    assert model.index(2, 1).data() == "30"
+    assert model.index(3, 1).data() == "1:52:40"
+    assert model.index(4, 1).data() == "4 duplicate tracks skipped"
+    assert model.index(5, 1).data() == "Select at least one album"
+
+
+def test_about_dialog_displays_release_metadata(
+    monkeypatch, qtbot, tmp_path: Path
+) -> None:
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
+    qtbot.addWidget(window)
+    window.show()
+
+    captured: list[tuple[object, str, str]] = []
+
+    def _fake_about(parent: object, title: str, text: str) -> None:
+        captured.append((parent, title, text))
+
+    monkeypatch.setattr(
+        "tidal_playlist_builder.gui.main_window.QMessageBox.about", _fake_about
+    )
+    window.show_about_dialog()
+
+    assert len(captured) == 1
+    _parent, title, text = captured[0]
+    assert title == f"About {APP_NAME}"
+    assert APP_NAME in text
+    assert __version__ in text
+    assert COPYRIGHT in text
+    assert LICENSE_NAME in text
+    assert PROJECT_URL in text

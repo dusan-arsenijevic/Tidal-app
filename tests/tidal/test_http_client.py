@@ -50,7 +50,7 @@ class _FakeSession:
         *,
         timeout: float,
         params: dict[str, object] | None = None,
-        json: dict[str, object] | list[object] | None = None,
+        json: object | None = None,
         headers: dict[str, str] | None = None,
     ) -> _FakeResponse:
         del params, json, headers

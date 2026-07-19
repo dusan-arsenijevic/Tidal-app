@@ -1,6 +1,7 @@
 """Thread pool coordinator for background workers."""
 
 from collections.abc import Callable
+import logging
 from typing import TypeVar
 
 from PySide6.QtCore import QThreadPool
@@ -22,6 +23,7 @@ from .workers import (
 )
 
 WorkerT = TypeVar("WorkerT", bound=BaseWorker[object])
+logger = logging.getLogger(__name__)
 
 
 class WorkerThreadPool:
@@ -34,12 +36,14 @@ class WorkerThreadPool:
             raise ValidationError("max_threads must be positive")
         self._pool = thread_pool or QThreadPool.globalInstance()
         self._pool.setMaxThreadCount(max_threads)
+        logger.debug("Thread pool initialized max_threads=%s", max_threads)
 
     @property
     def thread_pool(self) -> QThreadPool:
         return self._pool
 
     def start_worker(self, worker: WorkerT) -> WorkerT:
+        logger.debug("Submitting worker=%s", type(worker).__name__)
         self._pool.start(worker)
         return worker
 

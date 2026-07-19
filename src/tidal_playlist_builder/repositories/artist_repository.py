@@ -1,10 +1,13 @@
 """Artist repository."""
 
 from collections.abc import Callable
+import logging
 
 from tidal_playlist_builder.exceptions import RepositoryError
 from tidal_playlist_builder.model import Artist
 from tidal_playlist_builder.services.cache_service import CacheService
+
+logger = logging.getLogger(__name__)
 
 
 class ArtistRepository:
@@ -24,8 +27,10 @@ class ArtistRepository:
         cache_key = f"artist_search:{query.strip().lower()}:{limit}"
         cached = self._cache.get(cache_key)
         if isinstance(cached, list):
+            logger.debug("Artist repository cache hit")
             return cached
 
+        logger.debug("Artist repository cache miss")
         payload = self._search_operation(query, limit)
         artists = [self._to_artist(item) for item in payload]
         self._cache.set(cache_key, artists, ttl_seconds=self._cache_ttl_seconds)

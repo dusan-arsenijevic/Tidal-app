@@ -1,6 +1,7 @@
 """Album repository."""
 
 from collections.abc import Callable
+import logging
 from typing import TypeVar
 
 from tidal_playlist_builder.exceptions import RepositoryError
@@ -15,6 +16,7 @@ from tidal_playlist_builder.model import (
 from tidal_playlist_builder.services.cache_service import CacheService
 
 EnumT = TypeVar("EnumT")
+logger = logging.getLogger(__name__)
 
 
 class AlbumRepository:
@@ -45,8 +47,10 @@ class AlbumRepository:
         cache_key = f"artist_albums:{artist_id}"
         cached = self._cache.get(cache_key)
         if isinstance(cached, list):
+            logger.debug("Album repository cache hit for artist albums")
             return cached
 
+        logger.debug("Album repository cache miss for artist albums")
         payload = self._album_operation(artist_id)
         albums = [self._to_album(item) for item in payload]
         self._cache.set(cache_key, albums, ttl_seconds=self._cache_ttl_seconds)
@@ -56,8 +60,10 @@ class AlbumRepository:
         cache_key = f"album_tracks:{album_id}"
         cached = self._cache.get(cache_key)
         if isinstance(cached, list):
+            logger.debug("Album repository cache hit for album tracks")
             return cached
 
+        logger.debug("Album repository cache miss for album tracks")
         payload = self._track_operation(album_id)
         tracks = [self._to_track(item) for item in payload]
         self._cache.set(cache_key, tracks, ttl_seconds=self._cache_ttl_seconds)
