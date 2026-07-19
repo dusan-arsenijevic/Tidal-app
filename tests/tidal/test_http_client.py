@@ -201,3 +201,11 @@ def test_authentication_missing_token_raises_authentication_error() -> None:
 
     with pytest.raises(AuthenticationError, match="missing access_token"):
         client.authenticate({"token": "x"})
+
+
+def test_authentication_404_has_clear_endpoint_message() -> None:
+    session = _FakeSession(actions=[_FakeResponse(404, {})])
+    client = HttpTidalApiClient(_config(), session=session)
+
+    with pytest.raises(AuthenticationError, match="Sign-in endpoint '/auth/login'"):
+        client.authenticate({"username": "u", "password": "p"})

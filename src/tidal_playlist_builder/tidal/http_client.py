@@ -276,7 +276,11 @@ class HttpTidalApiClient:
 
             if status >= 400:
                 logger.warning("HTTP client error status=%s path=%s", status, path)
-                raise ProviderError(f"HTTP error status={status}")
+                if status == 404 and path == "/auth/login":
+                    raise AuthenticationError(
+                        "Sign-in endpoint '/auth/login' was not found on the configured API base URL"
+                    )
+                raise ProviderError(f"HTTP error status={status} path={path}")
 
             try:
                 return response.json()
