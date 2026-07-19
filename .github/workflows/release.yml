@@ -61,9 +61,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install . pyinstaller
 
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        run: choco install innosetup --yes --no-progress
+
       - name: Build Windows executable
         if: runner.os == 'Windows'
         run: python scripts/build_windows.py
+
+      - name: Build Windows installer package
+        if: runner.os == 'Windows'
+        run: python scripts/build_windows_installer.py
 
       - name: Build Linux/macOS executable
         if: runner.os != 'Windows'
@@ -84,3 +92,29 @@ jobs:
           name: desktop-${{ runner.os }}
           path: dist/desktop/**
           if-no-files-found: error
+
+  publish-release-assets:
+    if: github.event_name == 'release'
+    needs: [build-artifacts, desktop-artifacts]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: false
+
+      - name: Upload assets to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(find release-assets -type f \
+            \( -name "*.whl" -o -name "*.tar.gz" -o -name "*.exe" -o -name "TidalPlaylistBuilder" \))
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No release files found to upload."
+            exit 1
+          fi
+          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
