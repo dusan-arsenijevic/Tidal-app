@@ -45,6 +45,10 @@ Detailed design notes are in `docs/architecture.md`.
 
 ## Installation
 
+Download the latest Windows installer from GitHub Releases:
+
+- https://github.com/dusan-arsenijevic/Tidal-app/releases/latest
+
 ### Prerequisites
 
 - Python 3.12 or 3.13
@@ -140,6 +144,27 @@ Output executable:
 dist/desktop/windows/TidalPlaylistBuilder.exe
 ```
 
+### Local Windows installer package
+
+Install Inno Setup once (example with winget):
+
+```powershell
+winget install JRSoftware.InnoSetup
+```
+
+Then build installer:
+
+```powershell
+python -m pip install . pyinstaller
+python scripts/build_windows_installer.py
+```
+
+Output installer:
+
+```text
+dist/desktop/windows-installer/TidalPlaylistBuilder-setup-<version>.exe
+```
+
 ### CI desktop artifacts
 
 The `Release` workflow also builds desktop artifacts with PyInstaller for:
@@ -147,6 +172,8 @@ The `Release` workflow also builds desktop artifacts with PyInstaller for:
 - Windows (primary)
 - Linux (secondary)
 - macOS (secondary)
+
+On Windows, the release workflow also builds an installer package using Inno Setup.
 
 Artifacts are uploaded from `dist/desktop/` in GitHub Actions.
 
