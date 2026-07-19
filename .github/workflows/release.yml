@@ -76,7 +76,7 @@ jobs:
       - name: Build Linux/macOS executable
         if: runner.os != 'Windows'
         run: |
-          pyinstaller src/tidal_playlist_builder/__main__.py \
+          pyinstaller scripts/pyinstaller_entrypoint.py \
             --name TidalPlaylistBuilder \
             --noconfirm \
             --clean \

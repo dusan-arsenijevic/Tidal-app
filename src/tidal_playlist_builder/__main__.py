@@ -3,8 +3,8 @@
 import argparse
 from collections.abc import Sequence
 
-from .__about__ import __version__
-from .application import run
+from tidal_playlist_builder.__about__ import __version__
+from tidal_playlist_builder.application import run
 
 
 def main(argv: Sequence[str] | None = None) -> int:

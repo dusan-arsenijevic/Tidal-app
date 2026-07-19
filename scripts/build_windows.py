@@ -13,7 +13,7 @@ from PyInstaller.__main__ import run as pyinstaller_run
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT / "src"
-ENTRYPOINT = SRC_DIR / "tidal_playlist_builder" / "__main__.py"
+ENTRYPOINT = ROOT / "scripts" / "pyinstaller_entrypoint.py"
 ICON_SVG = SRC_DIR / "tidal_playlist_builder" / "resources" / "icons" / "app-icon.svg"
 APP_NAME = "TidalPlaylistBuilder"
 
