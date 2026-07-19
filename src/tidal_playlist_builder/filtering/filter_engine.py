@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable
 
+from tidal_playlist_builder.exceptions import ValidationError
 from tidal_playlist_builder.model.album import Album
 from tidal_playlist_builder.model.duplicate_group import DuplicateGroup
 from tidal_playlist_builder.model.enums import DuplicateStatus
@@ -37,7 +38,7 @@ class FilterEngine:
     def register_extension_filter(self, name: str, handler: ExtensionFilter) -> None:
         """Register an extension filter handler by name."""
         if not name.strip():
-            raise ValueError("Extension filter name cannot be empty")
+            raise ValidationError("Extension filter name cannot be empty")
         self._extension_filters[name] = handler
 
     def unregister_extension_filter(self, name: str) -> None:
@@ -154,7 +155,7 @@ class FilterEngine:
         for name, value in criteria.extension_filters.items():
             handler = self._extension_filters.get(name)
             if handler is None:
-                raise ValueError(f"Unknown extension filter: {name}")
+                raise ValidationError(f"Unknown extension filter: {name}")
             if not handler(album, value, context):
                 return False
         return True

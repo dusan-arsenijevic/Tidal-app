@@ -2,6 +2,7 @@
 
 import pytest
 
+from tidal_playlist_builder.exceptions import ValidationError
 from tidal_playlist_builder.model import (
     Album,
     AlbumEdition,
@@ -135,7 +136,7 @@ def test_supports_albums_with_no_tracks() -> None:
 def test_rejects_empty_selected_albums() -> None:
     builder = PlaylistBuildPlanBuilder()
 
-    with pytest.raises(ValueError, match="selected_albums cannot be empty"):
+    with pytest.raises(ValidationError, match="selected_albums cannot be empty"):
         builder.build(artist=_artist(), selected_albums=[])
 
 
@@ -145,7 +146,7 @@ def test_rejects_album_from_different_artist() -> None:
     other_artist = Artist(id="artist-2", name="Portishead")
     album = _album("alb-1", "Dummy", other_artist, tracks=())
 
-    with pytest.raises(ValueError, match="must belong to the input artist"):
+    with pytest.raises(ValidationError, match="must belong to the input artist"):
         builder.build(artist=artist, selected_albums=[album])
 
 
@@ -155,7 +156,7 @@ def test_rejects_duplicate_album_ids() -> None:
     album1 = _album("alb-1", "One", artist, tracks=())
     album2 = _album("alb-1", "Two", artist, tracks=())
 
-    with pytest.raises(ValueError, match="duplicate album ids"):
+    with pytest.raises(ValidationError, match="duplicate album ids"):
         builder.build(artist=artist, selected_albums=[album1, album2])
 
 
@@ -164,21 +165,21 @@ def test_rejects_non_artist_input() -> None:
     artist = _artist()
     album = _album("alb-1", "One", artist, tracks=())
 
-    with pytest.raises(TypeError, match="artist must be an Artist"):
+    with pytest.raises(ValidationError, match="artist must be an Artist"):
         builder.build(artist="not-an-artist", selected_albums=[album])  # type: ignore[arg-type]
 
 
 def test_rejects_non_album_in_selected_albums() -> None:
     builder = PlaylistBuildPlanBuilder()
 
-    with pytest.raises(TypeError, match="must contain only Album objects"):
+    with pytest.raises(ValidationError, match="must contain only Album objects"):
         builder.build(artist=_artist(), selected_albums=[object()])  # type: ignore[list-item]
 
 
 def test_track_model_validation() -> None:
-    with pytest.raises(ValueError, match="Track id cannot be empty"):
+    with pytest.raises(ValidationError, match="Track id cannot be empty"):
         Track(id="", title="X", duration_seconds=1)
-    with pytest.raises(ValueError, match="Track title cannot be empty"):
+    with pytest.raises(ValidationError, match="Track title cannot be empty"):
         Track(id="t1", title="", duration_seconds=1)
-    with pytest.raises(ValueError, match="cannot be negative"):
+    with pytest.raises(ValidationError, match="cannot be negative"):
         Track(id="t1", title="X", duration_seconds=-1)

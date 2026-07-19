@@ -1,11 +1,16 @@
 """Tidal provider implementation."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 import logging
 from time import monotonic, sleep
 from typing import Protocol, TypeVar
 
+from tidal_playlist_builder.exceptions import (
+    AuthenticationError,
+    PlaylistCreationError,
+    ValidationError,
+)
 from tidal_playlist_builder.model import Album, Artist, PlaylistBuildPlan, Track
 from tidal_playlist_builder.repositories import (
     AlbumRepository,
@@ -21,7 +26,7 @@ ProgressCallback = Callable[["PlaylistCreationProgress"], None]
 logger = logging.getLogger(__name__)
 
 
-class TidalApiClient(Protocol):
+class _TidalApiClient(Protocol):
     """Minimal API client contract used by TidalProvider."""
 
     def authenticate(self, credentials: dict[str, str]) -> str:
@@ -56,7 +61,7 @@ class PlaylistCreationProgress:
     message: str
 
 
-class PlaylistCreationCancelledError(RuntimeError):
+class PlaylistCreationCancelledError(PlaylistCreationError):
     """Raised when playlist creation is cancelled."""
 
 
@@ -104,7 +109,7 @@ class TidalProvider(IMusicProvider):
 
     def __init__(
         self,
-        api_client: TidalApiClient,
+        api_client: _TidalApiClient,
         cache_service: CacheService | None = None,
         max_retries: int = 2,
         retry_backoff_seconds: float = 0.1,
@@ -113,9 +118,9 @@ class TidalProvider(IMusicProvider):
         sleeper: Callable[[float], None] = sleep,
     ) -> None:
         if max_retries < 0:
-            raise ValueError("max_retries must be >= 0")
+            raise ValidationError("max_retries must be >= 0")
         if retry_backoff_seconds < 0:
-            raise ValueError("retry_backoff_seconds must be >= 0")
+            raise ValidationError("retry_backoff_seconds must be >= 0")
         self._api_client = api_client
         self._cache = cache_service or CacheService()
         self._max_retries = max_retries
@@ -154,33 +159,33 @@ class TidalProvider(IMusicProvider):
 
     def authenticate(self, credentials: dict[str, str]) -> None:
         if not credentials:
-            raise ValueError("credentials cannot be empty")
+            raise ValidationError("credentials cannot be empty")
         token = self._execute_with_resilience(
             lambda: self._api_client.authenticate(credentials)
         )
         if not token.strip():
-            raise ValueError("authentication returned empty token")
+            raise AuthenticationError("authentication returned empty token")
         self._access_token = token
         self._cache.clear()
 
     def search_artists(self, query: str, limit: int = 10) -> list[Artist]:
         self._ensure_authenticated()
         if not query.strip():
-            raise ValueError("query cannot be empty")
+            raise ValidationError("query cannot be empty")
         if limit <= 0:
-            raise ValueError("limit must be positive")
+            raise ValidationError("limit must be positive")
         return self._artist_repository.search(query, limit)
 
     def get_artist_albums(self, artist_id: str) -> list[Album]:
         self._ensure_authenticated()
         if not artist_id.strip():
-            raise ValueError("artist_id cannot be empty")
+            raise ValidationError("artist_id cannot be empty")
         return self._album_repository.get_artist_albums(artist_id)
 
     def get_album_tracks(self, album_id: str) -> list[Track]:
         self._ensure_authenticated()
         if not album_id.strip():
-            raise ValueError("album_id cannot be empty")
+            raise ValidationError("album_id cannot be empty")
         return self._album_repository.get_album_tracks(album_id)
 
     def create_playlist(
@@ -277,14 +282,14 @@ class TidalProvider(IMusicProvider):
 
     def _validate_playlist_plan(self, plan: PlaylistBuildPlan, batch_size: int) -> None:
         if not isinstance(plan, PlaylistBuildPlan):
-            raise TypeError("plan must be a PlaylistBuildPlan")
+            raise ValidationError("plan must be a PlaylistBuildPlan")
         if batch_size <= 0:
-            raise ValueError("batch_size must be positive")
+            raise ValidationError("batch_size must be positive")
         if plan.track_count != len(plan.selected_tracks):
-            raise ValueError("plan.track_count must match selected_tracks length")
+            raise ValidationError("plan.track_count must match selected_tracks length")
         for track in plan.selected_tracks:
             if not track.id.strip():
-                raise ValueError("all tracks in plan must have non-empty ids")
+                raise ValidationError("all tracks in plan must have non-empty ids")
 
     def _check_cancelled(self, token: CancellationToken, phase: str) -> None:
         if token.is_cancelled:
@@ -313,14 +318,13 @@ class TidalProvider(IMusicProvider):
 
     def _chunk_track_ids(
         self, track_ids: list[str], batch_size: int
-    ) -> list[list[str]]:
-        return [
-            track_ids[i : i + batch_size] for i in range(0, len(track_ids), batch_size)
-        ]
+    ) -> Iterator[list[str]]:
+        for i in range(0, len(track_ids), batch_size):
+            yield track_ids[i : i + batch_size]
 
     def _ensure_authenticated(self) -> None:
         if self._access_token is None:
-            raise RuntimeError("Provider is not authenticated")
+            raise AuthenticationError("Provider is not authenticated")
 
     def _execute_with_resilience(self, call: Callable[[], ResponseT]) -> ResponseT:
         attempt = 0

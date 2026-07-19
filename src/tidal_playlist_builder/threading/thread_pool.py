@@ -5,6 +5,7 @@ from typing import TypeVar
 
 from PySide6.QtCore import QThreadPool
 
+from tidal_playlist_builder.exceptions import ValidationError
 from tidal_playlist_builder.model import (
     Album,
     Artist,
@@ -30,7 +31,7 @@ class WorkerThreadPool:
         self, thread_pool: QThreadPool | None = None, max_threads: int = 4
     ) -> None:
         if max_threads <= 0:
-            raise ValueError("max_threads must be positive")
+            raise ValidationError("max_threads must be positive")
         self._pool = thread_pool or QThreadPool.globalInstance()
         self._pool.setMaxThreadCount(max_threads)
 
@@ -49,8 +50,7 @@ class WorkerThreadPool:
         limit: int = 10,
     ) -> ArtistSearchWorker:
         worker = ArtistSearchWorker(search_operation, query, limit)
-        self._pool.start(worker)
-        return worker
+        return self.start_worker(worker)
 
     def start_album_loading(
         self,
@@ -58,8 +58,7 @@ class WorkerThreadPool:
         artist_id: str,
     ) -> AlbumLoadingWorker:
         worker = AlbumLoadingWorker(load_operation, artist_id)
-        self._pool.start(worker)
-        return worker
+        return self.start_worker(worker)
 
     def start_duplicate_detection(
         self,
@@ -67,8 +66,7 @@ class WorkerThreadPool:
         albums: list[Album],
     ) -> DuplicateDetectionWorker:
         worker = DuplicateDetectionWorker(detect_operation, albums)
-        self._pool.start(worker)
-        return worker
+        return self.start_worker(worker)
 
     def start_playlist_creation(
         self,
@@ -76,5 +74,4 @@ class WorkerThreadPool:
         plan: PlaylistBuildPlan,
     ) -> PlaylistCreationWorker:
         worker = PlaylistCreationWorker(create_operation, plan)
-        self._pool.start(worker)
-        return worker
+        return self.start_worker(worker)

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field
 import logging
+from tempfile import mkdtemp
 
 import pytest
 
@@ -19,9 +20,9 @@ from tidal_playlist_builder.tidal import (
     CancellationToken,
     PlaylistCreationCancelledError,
     PlaylistCreationProgress,
-    RequestRateLimiter,
     TidalProvider,
 )
+from tidal_playlist_builder.tidal.provider import RequestRateLimiter
 
 
 @dataclass
@@ -71,7 +72,7 @@ def _provider(
     )
     provider = TidalProvider(
         api_client=client,
-        cache_service=CacheService(),
+        cache_service=CacheService(cache_directory=mkdtemp()),
         max_retries=2,
         retry_backoff_seconds=retry_backoff_seconds,
         rate_limiter=limiter,

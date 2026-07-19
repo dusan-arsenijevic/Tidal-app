@@ -1,6 +1,6 @@
 """Tests for GUI bootstrap factories."""
 
-from tidal_playlist_builder.gui import AlbumModelFactory, MockAlbumFactory
+from tidal_playlist_builder.gui.bootstrap import AlbumModelFactory, MockAlbumFactory
 from tidal_playlist_builder.gui.models import AlbumTableModel
 
 

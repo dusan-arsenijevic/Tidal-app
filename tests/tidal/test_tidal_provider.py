@@ -1,9 +1,14 @@
 """Tests for TidalProvider using mocked responses."""
 
 from dataclasses import dataclass, field
+from tempfile import mkdtemp
 
 import pytest
 
+from tidal_playlist_builder.exceptions import (
+    AuthenticationError,
+    ValidationError,
+)
 from tidal_playlist_builder.model import (
     Album,
     AlbumEdition,
@@ -14,7 +19,8 @@ from tidal_playlist_builder.model import (
     Track,
 )
 from tidal_playlist_builder.services.cache_service import CacheService
-from tidal_playlist_builder.tidal import RequestRateLimiter, TidalProvider
+from tidal_playlist_builder.tidal import TidalProvider
+from tidal_playlist_builder.tidal.provider import RequestRateLimiter
 
 
 @dataclass
@@ -81,7 +87,7 @@ def _build_provider(
     )
     return TidalProvider(
         api_client=client,
-        cache_service=CacheService(),
+        cache_service=CacheService(cache_directory=mkdtemp()),
         max_retries=max_retries,
         retry_backoff_seconds=retry_backoff_seconds,
         rate_limiter=limiter,
@@ -118,7 +124,7 @@ def test_authentication_required() -> None:
     client = _FakeClient()
     provider = _build_provider(client)
 
-    with pytest.raises(RuntimeError, match="not authenticated"):
+    with pytest.raises(AuthenticationError, match="not authenticated"):
         provider.search_artists("massive")
 
 
@@ -129,6 +135,14 @@ def test_authenticate_success() -> None:
     provider.authenticate({"username": "user", "password": "pass"})
 
     assert client.auth_calls == 1
+
+
+def test_authenticate_rejects_empty_credentials() -> None:
+    client = _FakeClient()
+    provider = _build_provider(client)
+
+    with pytest.raises(ValidationError, match="credentials cannot be empty"):
+        provider.authenticate({})
 
 
 def test_artist_search_uses_cache() -> None:

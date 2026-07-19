@@ -1,6 +1,7 @@
 """FilterEngine tests."""
 
 import pytest
+from tidal_playlist_builder.exceptions import ValidationError
 from tidal_playlist_builder.filtering.filter_engine import FilterEngine
 from tidal_playlist_builder.model import (
     Album,
@@ -253,7 +254,7 @@ def test_unknown_extension_filter_raises() -> None:
     engine = FilterEngine()
     criteria = FilterCriteria(extension_filters={"unknown_filter": True})
 
-    with pytest.raises(ValueError, match="Unknown extension filter"):
+    with pytest.raises(ValidationError, match="Unknown extension filter"):
         engine.filter_albums(_albums(), criteria, _duplicate_groups())
 
 
@@ -267,7 +268,7 @@ def test_unregister_extension_filter_disables_handler() -> None:
     engine.unregister_extension_filter("x")
     criteria = FilterCriteria(extension_filters={"x": 1})
 
-    with pytest.raises(ValueError, match="Unknown extension filter"):
+    with pytest.raises(ValidationError, match="Unknown extension filter"):
         engine.filter_albums(_albums(), criteria, _duplicate_groups())
 
 
@@ -277,5 +278,5 @@ def test_register_extension_filter_rejects_empty_name() -> None:
     def allow_all(_album: Album, _value: object, _context: object) -> bool:
         return True
 
-    with pytest.raises(ValueError, match="cannot be empty"):
+    with pytest.raises(ValidationError, match="cannot be empty"):
         engine.register_extension_filter("  ", allow_all)

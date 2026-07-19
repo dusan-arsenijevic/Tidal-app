@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 
+from tidal_playlist_builder.exceptions import RepositoryError
 from tidal_playlist_builder.model import Artist
 from tidal_playlist_builder.services.cache_service import CacheService
 
@@ -34,7 +35,7 @@ class ArtistRepository:
         artist_id = str(payload.get("id", "")).strip()
         name = str(payload.get("name", "")).strip()
         if not artist_id:
-            raise ValueError("Artist payload missing id")
+            raise RepositoryError("Artist payload missing id")
         if not name:
-            raise ValueError("Artist payload missing name")
+            raise RepositoryError("Artist payload missing name")
         return Artist(id=artist_id, name=name)

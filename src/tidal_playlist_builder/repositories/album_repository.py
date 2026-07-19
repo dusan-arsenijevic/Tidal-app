@@ -1,7 +1,9 @@
 """Album repository."""
 
 from collections.abc import Callable
+from typing import TypeVar
 
+from tidal_playlist_builder.exceptions import RepositoryError
 from tidal_playlist_builder.model import (
     Album,
     AlbumEdition,
@@ -12,9 +14,20 @@ from tidal_playlist_builder.model import (
 )
 from tidal_playlist_builder.services.cache_service import CacheService
 
+EnumT = TypeVar("EnumT")
+
 
 class AlbumRepository:
     """Fetches albums/tracks from provider client with cache support."""
+
+    _ALBUM_TYPE_MAP: dict[str, AlbumType] = {
+        "album": AlbumType.ALBUM,
+        "ep": AlbumType.EP,
+        "single": AlbumType.SINGLE,
+        "compilation": AlbumType.COMPILATION,
+    }
+    _EDITION_MAP: dict[str, AlbumEdition] = {item.value: item for item in AlbumEdition}
+    _QUALITY_MAP: dict[str, AudioQuality] = {item.value: item for item in AudioQuality}
 
     def __init__(
         self,
@@ -53,23 +66,23 @@ class AlbumRepository:
     def _to_album(self, payload: dict[str, object]) -> Album:
         artist_payload = payload.get("artist")
         if not isinstance(artist_payload, dict):
-            raise ValueError("Album payload missing artist object")
+            raise RepositoryError("Album payload missing artist object")
 
         artist = Artist(
             id=str(artist_payload.get("id", "")).strip(),
             name=str(artist_payload.get("name", "")).strip(),
         )
         if not artist.id:
-            raise ValueError("Album payload artist missing id")
+            raise RepositoryError("Album payload artist missing id")
         if not artist.name:
-            raise ValueError("Album payload artist missing name")
+            raise RepositoryError("Album payload artist missing name")
 
         album_id = str(payload.get("id", "")).strip()
         title = str(payload.get("title", "")).strip()
         if not album_id:
-            raise ValueError("Album payload missing id")
+            raise RepositoryError("Album payload missing id")
         if not title:
-            raise ValueError("Album payload missing title")
+            raise RepositoryError("Album payload missing title")
 
         release_year = self._as_int(payload.get("release_year"), 0)
         album_type = self._parse_album_type(str(payload.get("album_type", "album")))
@@ -96,30 +109,26 @@ class AlbumRepository:
         return Track(id=track_id, title=title, duration_seconds=duration)
 
     def _parse_album_type(self, value: str) -> AlbumType:
-        normalized = value.strip().lower()
-        mapping = {
-            "album": AlbumType.ALBUM,
-            "ep": AlbumType.EP,
-            "single": AlbumType.SINGLE,
-            "compilation": AlbumType.COMPILATION,
-        }
-        return mapping.get(normalized, AlbumType.ALBUM)
+        return self._parse_enum(value, self._ALBUM_TYPE_MAP, AlbumType.ALBUM)
 
     def _parse_edition(self, value: str) -> AlbumEdition:
-        normalized = value.strip().lower()
-        for edition in AlbumEdition:
-            if edition.value == normalized:
-                return edition
-        return AlbumEdition.ORIGINAL
+        return self._parse_enum(value, self._EDITION_MAP, AlbumEdition.ORIGINAL)
 
     def _parse_quality(self, value: str) -> AudioQuality:
+        return self._parse_enum(value, self._QUALITY_MAP, AudioQuality.LOSSY)
+
+    def _parse_enum(
+        self,
+        value: str,
+        mapping: dict[str, EnumT],
+        default: EnumT,
+    ) -> EnumT:
         normalized = value.strip().lower()
-        for quality in AudioQuality:
-            if quality.value == normalized:
-                return quality
-        return AudioQuality.LOSSY
+        return mapping.get(normalized, default)
 
     def _as_int(self, value: object, default: int) -> int:
+        if isinstance(value, bool):
+            return default
         if isinstance(value, int):
             return value
         if isinstance(value, str) and value.strip().isdigit():

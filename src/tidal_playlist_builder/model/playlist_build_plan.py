@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from tidal_playlist_builder.exceptions import ValidationError
+
 from .album import Album
 from .artist import Artist
 from .track import Track
@@ -20,10 +22,10 @@ class PlaylistBuildPlan:
 
     def __post_init__(self) -> None:
         if not self.selected_albums:
-            raise ValueError("selected_albums cannot be empty")
+            raise ValidationError("selected_albums cannot be empty")
         if self.duplicates_skipped < 0:
-            raise ValueError("duplicates_skipped cannot be negative")
+            raise ValidationError("duplicates_skipped cannot be negative")
         if self.duration_seconds < 0:
-            raise ValueError("duration_seconds cannot be negative")
+            raise ValidationError("duration_seconds cannot be negative")
         if self.track_count < 0:
-            raise ValueError("track_count cannot be negative")
+            raise ValidationError("track_count cannot be negative")

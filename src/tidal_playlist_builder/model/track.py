@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from tidal_playlist_builder.exceptions import ValidationError
+
 
 @dataclass(frozen=True, slots=True)
 class Track:
@@ -13,8 +15,8 @@ class Track:
 
     def __post_init__(self) -> None:
         if not self.id.strip():
-            raise ValueError("Track id cannot be empty")
+            raise ValidationError("Track id cannot be empty")
         if not self.title.strip():
-            raise ValueError("Track title cannot be empty")
+            raise ValidationError("Track title cannot be empty")
         if self.duration_seconds < 0:
-            raise ValueError("Track duration_seconds cannot be negative")
+            raise ValidationError("Track duration_seconds cannot be negative")

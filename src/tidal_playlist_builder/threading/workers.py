@@ -5,6 +5,7 @@ from typing import Generic, TypeVar
 
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
+from tidal_playlist_builder.exceptions import ValidationError
 from tidal_playlist_builder.model import (
     Album,
     Artist,
@@ -57,9 +58,9 @@ class ArtistSearchWorker(BaseWorker[list[Artist]]):
         limit: int = 10,
     ) -> None:
         if not query.strip():
-            raise ValueError("query cannot be empty")
+            raise ValidationError("query cannot be empty")
         if limit <= 0:
-            raise ValueError("limit must be positive")
+            raise ValidationError("limit must be positive")
         super().__init__(lambda: search_operation(query, limit))
 
 
@@ -72,7 +73,7 @@ class AlbumLoadingWorker(BaseWorker[list[Album]]):
         artist_id: str,
     ) -> None:
         if not artist_id.strip():
-            raise ValueError("artist_id cannot be empty")
+            raise ValidationError("artist_id cannot be empty")
         super().__init__(lambda: load_operation(artist_id))
 
 

@@ -37,15 +37,17 @@ class MainWindow(QMainWindow):
         settings: QSettings | None = None,
         album_table_model: AlbumTableModel | None = None,
         album_proxy_model: AlbumFilterProxyModel | None = None,
+        album_model_factory: AlbumModelFactory | None = None,
     ) -> None:
         super().__init__()
         self._settings = settings or QSettings(
             "tidal-playlist-builder", "tidal-playlist-builder"
         )
-        model_factory = AlbumModelFactory()
-        self._album_table_model = (
-            album_table_model or model_factory.create_album_table_model()
-        )
+        if album_table_model is None:
+            model_factory = album_model_factory or AlbumModelFactory()
+            self._album_table_model = model_factory.create_album_table_model()
+        else:
+            self._album_table_model = album_table_model
         self._album_proxy_model = album_proxy_model or AlbumFilterProxyModel()
         self._album_proxy_model.setSourceModel(self._album_table_model)
 
@@ -161,11 +163,9 @@ class MainWindow(QMainWindow):
             for column, width in enumerate(widths):
                 if column >= self._album_table_model.columnCount():
                     continue
-                if isinstance(width, int):
-                    self._album_table.setColumnWidth(column, width)
-                    continue
-                if isinstance(width, str) and width.isdigit():
-                    self._album_table.setColumnWidth(column, int(width))
+                parsed_width = self._coerce_column_width(width)
+                if parsed_width is not None:
+                    self._album_table.setColumnWidth(column, parsed_width)
 
     def _save_settings(self) -> None:
         self._settings.setValue(self._SETTINGS_GEOMETRY, self.saveGeometry())
@@ -203,6 +203,15 @@ class MainWindow(QMainWindow):
         """Enable/disable search action without changing business behavior."""
         self._search_enabled = enabled
         self._search_button.setEnabled(enabled and not self._is_busy)
+
+    def _coerce_column_width(self, value: object) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        return None
 
     @property
     def album_table_model(self) -> AlbumTableModel:

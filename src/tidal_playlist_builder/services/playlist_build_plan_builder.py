@@ -1,5 +1,6 @@
 """Service for building playlist plans from selected albums."""
 
+from tidal_playlist_builder.exceptions import ValidationError
 from tidal_playlist_builder.model.album import Album
 from tidal_playlist_builder.model.artist import Artist
 from tidal_playlist_builder.model.playlist_build_plan import PlaylistBuildPlan
@@ -42,16 +43,20 @@ class PlaylistBuildPlanBuilder:
 
     def _validate_inputs(self, artist: Artist, selected_albums: list[Album]) -> None:
         if not isinstance(artist, Artist):
-            raise TypeError("artist must be an Artist")
+            raise ValidationError("artist must be an Artist")
         if not selected_albums:
-            raise ValueError("selected_albums cannot be empty")
+            raise ValidationError("selected_albums cannot be empty")
 
         album_ids: set[str] = set()
         for album in selected_albums:
             if not isinstance(album, Album):
-                raise TypeError("selected_albums must contain only Album objects")
+                raise ValidationError("selected_albums must contain only Album objects")
             if album.artist.id != artist.id:
-                raise ValueError("All selected albums must belong to the input artist")
+                raise ValidationError(
+                    "All selected albums must belong to the input artist"
+                )
             if album.id in album_ids:
-                raise ValueError("selected_albums cannot contain duplicate album ids")
+                raise ValidationError(
+                    "selected_albums cannot contain duplicate album ids"
+                )
             album_ids.add(album.id)

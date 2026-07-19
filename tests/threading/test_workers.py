@@ -4,6 +4,7 @@ import time
 
 from PySide6.QtCore import QThreadPool
 
+from tidal_playlist_builder.exceptions import ValidationError
 from tidal_playlist_builder.model import (
     Album,
     AlbumEdition,
@@ -14,13 +15,13 @@ from tidal_playlist_builder.model import (
     PlaylistBuildPlan,
     Track,
 )
-from tidal_playlist_builder.threading import (
+from tidal_playlist_builder.threading import WorkerThreadPool
+from tidal_playlist_builder.threading.workers import (
     AlbumLoadingWorker,
     ArtistSearchWorker,
     BaseWorker,
     DuplicateDetectionWorker,
     PlaylistCreationWorker,
-    WorkerThreadPool,
 )
 
 
@@ -82,30 +83,30 @@ def test_base_worker_emits_error(qtbot) -> None:
 def test_artist_search_worker_validation() -> None:
     try:
         ArtistSearchWorker(lambda _q, _l: [], "   ")
-        assert False, "Expected ValueError"
-    except ValueError as error:
+        assert False, "Expected ValidationError"
+    except ValidationError as error:
         assert "query cannot be empty" in str(error)
 
     try:
         ArtistSearchWorker(lambda _q, _l: [], "x", 0)
-        assert False, "Expected ValueError"
-    except ValueError as error:
+        assert False, "Expected ValidationError"
+    except ValidationError as error:
         assert "limit must be positive" in str(error)
 
 
 def test_album_loading_worker_validation() -> None:
     try:
         AlbumLoadingWorker(lambda _artist_id: [], " ")
-        assert False, "Expected ValueError"
-    except ValueError as error:
+        assert False, "Expected ValidationError"
+    except ValidationError as error:
         assert "artist_id cannot be empty" in str(error)
 
 
 def test_worker_thread_pool_validates_max_threads() -> None:
     try:
         WorkerThreadPool(max_threads=0)
-        assert False, "Expected ValueError"
-    except ValueError as error:
+        assert False, "Expected ValidationError"
+    except ValidationError as error:
         assert "max_threads must be positive" in str(error)
 
 
