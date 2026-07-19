@@ -132,7 +132,7 @@ class MainWindow(QMainWindow):
         actions_menu.addAction(self._create_playlist_menu_action)
 
         account_menu: QMenu = self.menuBar().addMenu("&Account")
-        self._sign_in_action = QAction("Sign In...", self)
+        self._sign_in_action = QAction("Sign In with Browser...", self)
         self._sign_in_action.triggered.connect(self._on_sign_in_clicked)
         account_menu.addAction(self._sign_in_action)
         self._sign_out_action = QAction("Sign Out", self)
@@ -455,10 +455,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_sign_in_clicked(self) -> None:
-        credentials = self._prompt_sign_in_credentials(self._authenticated_username)
-        if credentials is None:
-            return
-        self.signInRequested.emit(credentials[0], credentials[1])
+        self.signInRequested.emit({"interactive": "true"}, True)
 
     @Slot()
     def _on_sign_out_clicked(self) -> None:

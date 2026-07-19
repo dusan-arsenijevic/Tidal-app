@@ -83,6 +83,21 @@ $env:PYTHONPATH = "src"
 python -m tidal_playlist_builder
 ```
 
+## TIDAL sign-in
+
+Use **Account → Sign In with Browser...** in the app.  
+The app uses OAuth device login via `tidalapi` and stores the session for reuse in:
+
+```text
+<cache-dir>/tidalapi-session.json
+```
+
+If needed, you can switch back to the legacy HTTP backend contract:
+
+```powershell
+$env:TPB_PROVIDER_BACKEND = "http"
+```
+
 ## Project structure
 
 ```text

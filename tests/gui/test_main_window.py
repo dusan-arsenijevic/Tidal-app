@@ -461,16 +461,11 @@ def test_about_dialog_displays_release_metadata(
     assert PROJECT_URL in text
 
 
-def test_sign_in_action_emits_credentials(qtbot, tmp_path: Path, monkeypatch) -> None:
+def test_sign_in_action_emits_credentials(qtbot, tmp_path: Path) -> None:
     window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
     qtbot.addWidget(window)
     window.show()
 
-    monkeypatch.setattr(
-        window,
-        "_prompt_sign_in_credentials",
-        lambda _default: ({"username": "demo", "password": "secret"}, True),
-    )
     emitted: list[tuple[dict[str, str], bool]] = []
     window.signInRequested.connect(
         lambda credentials, remember: emitted.append((credentials, remember))
@@ -478,11 +473,11 @@ def test_sign_in_action_emits_credentials(qtbot, tmp_path: Path, monkeypatch) ->
     sign_in_action = next(
         action
         for action in window.findChildren(QAction)
-        if action.text() == "Sign In..."
+        if action.text() == "Sign In with Browser..."
     )
     sign_in_action.trigger()
 
-    assert emitted == [({"username": "demo", "password": "secret"}, True)]
+    assert emitted == [({"interactive": "true"}, True)]
 
 
 def test_authentication_state_updates_account_actions(qtbot, tmp_path: Path) -> None:
@@ -493,7 +488,7 @@ def test_authentication_state_updates_account_actions(qtbot, tmp_path: Path) -> 
     sign_in_action = next(
         action
         for action in window.findChildren(QAction)
-        if action.text() == "Sign In..."
+        if action.text() == "Sign In with Browser..."
     )
     sign_out_action = next(
         action for action in window.findChildren(QAction) if action.text() == "Sign Out"

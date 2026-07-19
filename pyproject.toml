@@ -37,6 +37,7 @@ dependencies = [
   "keyring>=25,<26",
   "PySide6>=6.11,<7",
   "requests>=2.31,<3",
+  "tidalapi>=0.8.11,<1",
 ]
 
 [project.urls]

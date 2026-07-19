@@ -107,6 +107,7 @@ def _config(tmp_path: Path) -> AppConfig:
         max_memory_entries=64,
         default_ttl_seconds=300,
         max_worker_threads=2,
+        provider_backend="http",
         auth_credentials={"token": "x"},
     )
 
@@ -122,6 +123,7 @@ def _config_without_auth(tmp_path: Path) -> AppConfig:
         max_memory_entries=64,
         default_ttl_seconds=300,
         max_worker_threads=2,
+        provider_backend="http",
         auth_credentials=None,
     )
 

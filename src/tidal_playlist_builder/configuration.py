@@ -19,6 +19,7 @@ class AppConfig:
     max_memory_entries: int
     default_ttl_seconds: int | None
     max_worker_threads: int
+    provider_backend: str = "tidalapi"
     auth_credentials: dict[str, str] | None = None
     settings_org: str = "tidal-playlist-builder"
     settings_app: str = "tidal-playlist-builder"
@@ -37,6 +38,7 @@ def load_app_config_from_env() -> AppConfig:
         max_memory_entries=int(os.getenv("TPB_MAX_MEMORY_ENTRIES", "512")),
         default_ttl_seconds=_optional_int_from_env("TPB_DEFAULT_TTL_SECONDS"),
         max_worker_threads=int(os.getenv("TPB_MAX_WORKER_THREADS", "4")),
+        provider_backend=os.getenv("TPB_PROVIDER_BACKEND", "tidalapi"),
         auth_credentials=_auth_credentials_from_env(),
         settings_org=os.getenv("TPB_SETTINGS_ORG", "tidal-playlist-builder"),
         settings_app=os.getenv("TPB_SETTINGS_APP", "tidal-playlist-builder"),

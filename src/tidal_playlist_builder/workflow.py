@@ -423,24 +423,27 @@ class WorkflowController(QObject):
     def _authenticate_and_optionally_persist(
         self, credentials: dict[str, str], remember: bool
     ) -> tuple[str | None, str | None]:
-        self._provider.authenticate(credentials)
+        auth_credentials = dict(credentials)
+        auth_credentials["remember_session"] = "true" if remember else "false"
+        self._provider.authenticate(auth_credentials)
         warning: str | None = None
-        if remember:
-            username = str(credentials.get("username", "")).strip()
-            password = str(credentials.get("password", "")).strip()
-            try:
-                self._credential_store.save(username=username, password=password)
-            except CredentialStorageError:
-                warning = (
-                    "Signed in, but secure credential storage is unavailable. "
-                    "Credentials were not saved."
-                )
-        else:
-            try:
-                self._credential_store.clear()
-            except CredentialStorageError:
-                warning = "Signed in, but clearing saved credentials failed."
-        username_value = str(credentials.get("username", "")).strip()
+        username = str(credentials.get("username", "")).strip()
+        password = str(credentials.get("password", "")).strip()
+        if username and password:
+            if remember:
+                try:
+                    self._credential_store.save(username=username, password=password)
+                except CredentialStorageError:
+                    warning = (
+                        "Signed in, but secure credential storage is unavailable. "
+                        "Credentials were not saved."
+                    )
+            else:
+                try:
+                    self._credential_store.clear()
+                except CredentialStorageError:
+                    warning = "Signed in, but clearing saved credentials failed."
+        username_value = username
         return (username_value or None), warning
 
     def _on_sign_in_succeeded(self, result: object) -> None:

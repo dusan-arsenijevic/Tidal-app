@@ -72,6 +72,8 @@ def main() -> int:
             "requests",
             "--hidden-import",
             "keyring",
+            "--hidden-import",
+            "tidalapi",
             "--distpath",
             str(paths.dist),
             "--workpath",

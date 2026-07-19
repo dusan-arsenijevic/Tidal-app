@@ -52,6 +52,7 @@ def _config(tmp_path: Path) -> AppConfig:
         max_memory_entries=32,
         default_ttl_seconds=300,
         max_worker_threads=2,
+        provider_backend="http",
     )
 
 

@@ -31,6 +31,8 @@ from tidal_playlist_builder.tidal import (
     HttpClientConfig,
     HttpTidalApiClient,
     TidalApiClient,
+    TidalApiSdkClient,
+    TidalApiSessionConfig,
     TidalProvider,
 )
 
@@ -105,16 +107,8 @@ def build_production_composition(
             default_ttl_seconds=app_config.default_ttl_seconds,
         )
 
-    # initialize HTTP client
-    resolved_api_client = api_client or HttpTidalApiClient(
-        HttpClientConfig(
-            base_url=app_config.base_url,
-            timeout_seconds=app_config.timeout_seconds,
-            max_retries=app_config.retry_count,
-            backoff_base_seconds=app_config.retry_backoff_seconds,
-            user_agent=app_config.user_agent,
-        )
-    )
+    # initialize provider transport
+    resolved_api_client = api_client or _build_default_api_client(app_config)
 
     # initialize provider
     provider = TidalProvider(
@@ -126,13 +120,19 @@ def build_production_composition(
     credential_store = KeyringCredentialStore(service_name=app_config.settings_app)
     startup_credentials = app_config.auth_credentials
     if startup_credentials is None:
-        try:
-            startup_credentials = credential_store.load()
-        except CredentialStorageError:
-            logger.warning(
-                "Secure credential storage unavailable; startup auto-login disabled",
-                exc_info=True,
-            )
+        if app_config.provider_backend.strip().lower() == "tidalapi":
+            startup_credentials = {
+                "interactive": "false",
+                "remember_session": "true",
+            }
+        else:
+            try:
+                startup_credentials = credential_store.load()
+            except CredentialStorageError:
+                logger.warning(
+                    "Secure credential storage unavailable; startup auto-login disabled",
+                    exc_info=True,
+                )
     if startup_credentials:
         try:
             logger.info("Authenticating provider from startup credentials")
@@ -195,6 +195,22 @@ def build_production_composition(
         main_window=main_window,
         credential_store=credential_store,
     )
+
+
+def _build_default_api_client(config: AppConfig) -> TidalApiClient:
+    backend = config.provider_backend.strip().lower()
+    if backend == "http":
+        return HttpTidalApiClient(
+            HttpClientConfig(
+                base_url=config.base_url,
+                timeout_seconds=config.timeout_seconds,
+                max_retries=config.retry_count,
+                backoff_base_seconds=config.retry_backoff_seconds,
+                user_agent=config.user_agent,
+            )
+        )
+    session_file = config.cache_directory / "tidalapi-session.json"
+    return TidalApiSdkClient(TidalApiSessionConfig(session_file=session_file))
 
 
 def run() -> int:

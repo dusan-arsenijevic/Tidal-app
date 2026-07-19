@@ -88,6 +88,7 @@ jobs:
             --collect-data tidal_playlist_builder.resources \
             --hidden-import requests \
             --hidden-import keyring \
+            --hidden-import tidalapi \
             --distpath dist/desktop/${{ runner.os }}
 
       - name: Upload desktop artifacts

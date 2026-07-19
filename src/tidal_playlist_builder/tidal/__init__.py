@@ -8,6 +8,7 @@ from .provider import (
     PlaylistCreationProgress,
     TidalProvider,
 )
+from .tidalapi_client import TidalApiSdkClient, TidalApiSessionConfig
 
 __all__ = [
     "CancellationToken",
@@ -16,5 +17,7 @@ __all__ = [
     "PlaylistCreationCancelledError",
     "PlaylistCreationProgress",
     "TidalApiClient",
+    "TidalApiSdkClient",
+    "TidalApiSessionConfig",
     "TidalProvider",
 ]
