@@ -44,6 +44,8 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      TPB_BUILD_NUMBER: ${{ github.run_number }}.${{ github.run_attempt }}
 
     steps:
       - name: Checkout
@@ -113,10 +115,27 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
+          build_label="build.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA::7}"
           mapfile -t files < <(find release-assets -type f \
             \( -name "*.whl" -o -name "*.tar.gz" -o -name "*.exe" -o -name "TidalPlaylistBuilder" \))
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No release files found to upload."
             exit 1
           fi
-          gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
+          staging_dir="$(mktemp -d)"
+          for file in "${files[@]}"; do
+            base_name="$(basename "$file")"
+            if [[ "$base_name" == *.whl || "$base_name" == *.tar.gz ]]; then
+              cp "$file" "$staging_dir/$base_name"
+              continue
+            fi
+            if [[ "$base_name" == *.* ]]; then
+              stem="${base_name%.*}"
+              ext=".${base_name##*.}"
+            else
+              stem="$base_name"
+              ext=""
+            fi
+            cp "$file" "$staging_dir/${stem}-${build_label}${ext}"
+          done
+          gh release upload "$RELEASE_TAG" "$staging_dir"/* --clobber

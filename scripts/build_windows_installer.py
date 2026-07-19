@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -74,7 +75,7 @@ def _installer_script() -> str:
     exe_path = WINDOWS_EXE.resolve()
     installer_dir = INSTALLER_DIR.resolve()
     license_file = (ROOT / "LICENSE").resolve()
-    output_base = f"TidalPlaylistBuilder-setup-{__version__}"
+    output_base = f"TidalPlaylistBuilder-setup-{__version__}{_build_suffix()}"
     app_id = "TidalPlaylistBuilder"
     return f"""[Setup]
 AppId={app_id}
@@ -121,6 +122,14 @@ def _non_empty(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped if stripped else None
+
+
+def _build_suffix() -> str:
+    build_number = _non_empty(os.environ.get("TPB_BUILD_NUMBER"))
+    if build_number is None:
+        return ""
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "-", build_number)
+    return f"-build.{normalized}"
 
 
 if __name__ == "__main__":

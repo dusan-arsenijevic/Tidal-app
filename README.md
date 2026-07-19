@@ -156,6 +156,8 @@ Then build installer:
 
 ```powershell
 python -m pip install . pyinstaller
+# optional release traceability suffix
+$env:TPB_BUILD_NUMBER = "123.1"
 python scripts/build_windows_installer.py
 ```
 
@@ -163,6 +165,12 @@ Output installer:
 
 ```text
 dist/desktop/windows-installer/TidalPlaylistBuilder-setup-<version>.exe
+```
+
+When `TPB_BUILD_NUMBER` is set, installer output includes it:
+
+```text
+dist/desktop/windows-installer/TidalPlaylistBuilder-setup-<version>-build.<build-number>.exe
 ```
 
 ### CI desktop artifacts
