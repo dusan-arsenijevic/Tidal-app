@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 from tempfile import TemporaryDirectory
 
@@ -86,8 +88,37 @@ def main() -> int:
         if icon_path.exists():
             args.extend(["--icon", str(icon_path)])
         pyinstaller_run(args)
+    _write_build_info(paths.dist, __version__)
 
     return 0
+
+
+def _write_build_info(dist_dir: Path, version: str) -> None:
+    build_number = os.getenv("TPB_BUILD_NUMBER", "").strip() or _git_short_head()
+    payload = {
+        "version": version,
+        "build_number": build_number,
+    }
+    build_info_path = dist_dir / "build-info.json"
+    build_info_path.write_text(
+        json.dumps(payload, ensure_ascii=True, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _git_short_head() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=str(ROOT),
+        )
+    except Exception:
+        return "unknown"
+    value = result.stdout.strip()
+    return value or "unknown"
 
 
 def _render_icon_for_windows(output_path: Path) -> None:

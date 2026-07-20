@@ -37,7 +37,7 @@ from tidal_playlist_builder.__about__ import (
     COPYRIGHT,
     LICENSE_NAME,
     PROJECT_URL,
-    __version__,
+    display_version,
 )
 
 from .models import AlbumFilterProxyModel, AlbumTableModel
@@ -561,7 +561,7 @@ class MainWindow(QMainWindow):
             f"About {APP_NAME}",
             (
                 f"{APP_NAME}\n"
-                f"Version: {__version__}\n"
+                f"Version: {display_version()}\n"
                 f"{COPYRIGHT}\n"
                 f"License: {LICENSE_NAME}\n"
                 f"Project URL: {PROJECT_URL}"

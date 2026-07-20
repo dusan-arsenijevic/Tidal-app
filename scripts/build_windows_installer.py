@@ -19,11 +19,10 @@ def main() -> int:
     if sys.platform != "win32":
         raise SystemExit("build_windows_installer.py must be run on Windows")
 
-    if not WINDOWS_EXE.exists():
-        subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "build_windows.py")],
-            check=True,
-        )
+    subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "build_windows.py")],
+        check=True,
+    )
 
     iscc = _resolve_iscc()
     if iscc is None:
@@ -73,6 +72,9 @@ def _installer_script() -> str:
     from tidal_playlist_builder.__about__ import __version__
 
     exe_path = WINDOWS_EXE.resolve()
+    build_info_path = (
+        ROOT / "dist" / "desktop" / "windows" / "build-info.json"
+    ).resolve()
     installer_dir = INSTALLER_DIR.resolve()
     license_file = (ROOT / "LICENSE").resolve()
     output_base = f"TidalPlaylistBuilder-setup-{__version__}{_build_suffix()}"
@@ -107,6 +109,7 @@ Name: "desktopicon"; Description: "{{cm:CreateDesktopIcon}}"; GroupDescription: 
 
 [Files]
 Source: "{exe_path}"; DestDir: "{{app}}"; Flags: ignoreversion
+Source: "{build_info_path}"; DestDir: "{{app}}"; Flags: ignoreversion
 
 [Icons]
 Name: "{{group}}\\{APP_NAME}"; Filename: "{{app}}\\TidalPlaylistBuilder.exe"
