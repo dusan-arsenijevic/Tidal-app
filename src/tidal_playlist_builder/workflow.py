@@ -16,7 +16,9 @@ from tidal_playlist_builder.model import (
     Album,
     Artist,
     DuplicateGroup,
+    PlaylistConflictAction,
     PlaylistBuildPlan,
+    PlaylistSummary,
 )
 from tidal_playlist_builder.services import (
     KeyringCredentialStore,
@@ -108,12 +110,59 @@ class WorkflowController(QObject):
             return
 
         plan = self._plan_for_publish(self._current_preview_plan)
+        playlist_name = self._resolved_playlist_name(plan)
+        self._playlist_creation_running = True
+        lookup_worker = BaseWorker(
+            lambda: self._provider.find_playlist_by_name(playlist_name)
+        )
+        self._connect_playlist_lookup_worker(lookup_worker, plan)
+        self._worker_pool.start_worker(lookup_worker)
+
+    def _connect_playlist_lookup_worker(
+        self,
+        worker: BaseWorker[PlaylistSummary | None],
+        plan: PlaylistBuildPlan,
+    ) -> None:
+        self._retain_worker(worker)
+        worker.signals.started.connect(
+            lambda: self._start_operation("Checking existing playlists...")
+        )
+        worker.signals.error.connect(self._handle_error)
+        worker.signals.result.connect(
+            lambda existing: self._on_playlist_lookup_result(plan, existing)
+        )
+        worker.signals.finished.connect(self._finish_operation)
+
+    def _on_playlist_lookup_result(
+        self,
+        plan: PlaylistBuildPlan,
+        existing_playlist: object,
+    ) -> None:
+        conflict_action = PlaylistConflictAction.CREATE_ANOTHER
+        existing_playlist_id: str | None = None
+        if existing_playlist is not None:
+            if not isinstance(existing_playlist, PlaylistSummary):
+                self._handle_error("Playlist lookup returned invalid data")
+                return
+            conflict_action = self._window.prompt_playlist_conflict(
+                existing_playlist.name
+            )
+            if conflict_action is PlaylistConflictAction.CANCEL:
+                self._playlist_creation_running = False
+                self._window.set_status("Playlist publish cancelled.")
+                return
+            if conflict_action in {
+                PlaylistConflictAction.REPLACE_EXISTING,
+                PlaylistConflictAction.APPEND_TRACKS,
+            }:
+                existing_playlist_id = existing_playlist.id
 
         self._playlist_cancel_token = CancellationToken()
-        self._playlist_creation_running = True
         worker = self._worker_pool.start_playlist_creation(
             lambda playlist_plan: self._provider.create_playlist(
                 playlist_plan,
+                conflict_action=conflict_action,
+                existing_playlist_id=existing_playlist_id,
                 progress_callback=self._on_playlist_progress,
                 cancellation_token=self._playlist_cancel_token,
             ),
@@ -479,6 +528,11 @@ class WorkflowController(QObject):
         if not playlist_name:
             return plan
         return replace(plan, playlist_name=playlist_name)
+
+    def _resolved_playlist_name(self, plan: PlaylistBuildPlan) -> str:
+        if plan.playlist_name and plan.playlist_name.strip():
+            return plan.playlist_name.strip()
+        return f"{plan.artist.name} Playlist"
 
     def _format_duration(self, seconds: int) -> str:
         hours = seconds // 3600

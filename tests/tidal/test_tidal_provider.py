@@ -7,6 +7,7 @@ import pytest
 
 from tidal_playlist_builder.exceptions import (
     AuthenticationError,
+    PlaylistCreationError,
     ValidationError,
 )
 from tidal_playlist_builder.model import (
@@ -15,11 +16,13 @@ from tidal_playlist_builder.model import (
     AlbumType,
     Artist,
     AudioQuality,
+    PlaylistConflictAction,
     PlaylistBuildPlan,
+    PlaylistSummary,
     Track,
 )
 from tidal_playlist_builder.services.cache_service import CacheService
-from tidal_playlist_builder.tidal import TidalProvider
+from tidal_playlist_builder.tidal import PlaylistCreationCancelledError, TidalProvider
 from tidal_playlist_builder.tidal.provider import RequestRateLimiter
 
 
@@ -31,13 +34,25 @@ class _FakeClient:
     track_calls: int = 0
     create_playlist_calls: int = 0
     add_tracks_calls: int = 0
+    list_playlists_calls: int = 0
+    get_playlist_tracks_calls: int = 0
+    remove_tracks_calls: int = 0
     delete_playlist_calls: int = 0
     auth_token: str = "token-123"
     artist_response: list[dict[str, object]] = field(default_factory=list)
     album_response: list[dict[str, object]] = field(default_factory=list)
     track_response: list[dict[str, object]] = field(default_factory=list)
     artist_failures: list[Exception] = field(default_factory=list)
+    list_playlists_failure: Exception | None = None
+    remove_tracks_failure: Exception | None = None
+    add_tracks_failure: Exception | None = None
+    add_tracks_failures: list[Exception] = field(default_factory=list)
+    add_tracks_fail_on_track_id: str | None = None
+    playlist_response: list[dict[str, object]] = field(default_factory=list)
+    playlist_tracks_by_id: dict[str, list[str]] = field(default_factory=dict)
     last_playlist_name: str | None = None
+    removed_track_batches: list[tuple[str, list[str]]] = field(default_factory=list)
+    added_track_batches: list[tuple[str, list[str]]] = field(default_factory=list)
 
     def authenticate(self, credentials: dict[str, str]) -> str:
         self.auth_calls += 1
@@ -67,7 +82,35 @@ class _FakeClient:
         return "playlist-1"
 
     def add_tracks_to_playlist(self, playlist_id: str, track_ids: list[str]) -> None:
+        if (
+            self.add_tracks_fail_on_track_id is not None
+            and self.add_tracks_fail_on_track_id in track_ids
+        ):
+            raise TimeoutError("chunk failed")
+        if self.add_tracks_failures:
+            raise self.add_tracks_failures.pop(0)
+        if self.add_tracks_failure is not None:
+            raise self.add_tracks_failure
         self.add_tracks_calls += 1
+        self.added_track_batches.append((playlist_id, list(track_ids)))
+
+    def list_playlists(self) -> list[dict[str, object]]:
+        self.list_playlists_calls += 1
+        if self.list_playlists_failure is not None:
+            raise self.list_playlists_failure
+        return list(self.playlist_response)
+
+    def get_playlist_track_ids(self, playlist_id: str) -> list[str]:
+        self.get_playlist_tracks_calls += 1
+        return list(self.playlist_tracks_by_id.get(playlist_id, []))
+
+    def remove_tracks_from_playlist(
+        self, playlist_id: str, track_ids: list[str]
+    ) -> None:
+        if self.remove_tracks_failure is not None:
+            raise self.remove_tracks_failure
+        self.remove_tracks_calls += 1
+        self.removed_track_batches.append((playlist_id, list(track_ids)))
 
     def delete_playlist(self, playlist_id: str) -> None:
         self.delete_playlist_calls += 1
@@ -285,3 +328,128 @@ def test_playlist_creation_uses_custom_plan_name() -> None:
     provider.create_playlist(custom_plan)
 
     assert client.last_playlist_name == "Road Trip Mix"
+
+
+def test_find_playlist_by_name_returns_match_case_insensitive() -> None:
+    client = _FakeClient(
+        playlist_response=[
+            {"id": "pl-1", "name": "Road Trip Mix"},
+            {"id": "pl-2", "name": "Chill"},
+        ]
+    )
+    provider = _build_provider(client)
+    provider.authenticate({"token": "x"})
+
+    playlist = provider.find_playlist_by_name("road trip mix")
+
+    assert playlist == PlaylistSummary(id="pl-1", name="Road Trip Mix")
+
+
+def test_find_playlist_by_name_returns_none_when_not_found() -> None:
+    client = _FakeClient(playlist_response=[{"id": "pl-1", "name": "Road Trip Mix"}])
+    provider = _build_provider(client)
+    provider.authenticate({"token": "x"})
+
+    playlist = provider.find_playlist_by_name("Not Existing")
+
+    assert playlist is None
+
+
+def test_find_playlist_by_name_handles_lookup_failure() -> None:
+    client = _FakeClient(list_playlists_failure=RuntimeError("lookup failed"))
+    provider = _build_provider(client)
+    provider.authenticate({"token": "x"})
+
+    with pytest.raises(PlaylistCreationError, match="look up existing playlists"):
+        provider.find_playlist_by_name("Road Trip Mix")
+
+
+def test_create_playlist_replace_existing_reuses_and_clears() -> None:
+    client = _FakeClient(playlist_tracks_by_id={"pl-existing": ["track:9", "track:8"]})
+    provider = _build_provider(client)
+    provider.authenticate({"token": "x"})
+
+    playlist_id = provider.create_playlist(
+        _plan(),
+        conflict_action=PlaylistConflictAction.REPLACE_EXISTING,
+        existing_playlist_id="pl-existing",
+    )
+
+    assert playlist_id == "pl-existing"
+    assert client.create_playlist_calls == 0
+    assert client.remove_tracks_calls == 1
+    assert client.add_tracks_calls == 1
+    assert client.removed_track_batches == [("pl-existing", ["track:9", "track:8"])]
+    assert client.added_track_batches == [("pl-existing", ["track:1", "track:2"])]
+
+
+def test_create_playlist_append_tracks_only_missing() -> None:
+    client = _FakeClient(playlist_tracks_by_id={"pl-existing": ["track:1", "track:3"]})
+    provider = _build_provider(client)
+    provider.authenticate({"token": "x"})
+
+    playlist_id = provider.create_playlist(
+        _plan(),
+        conflict_action=PlaylistConflictAction.APPEND_TRACKS,
+        existing_playlist_id="pl-existing",
+    )
+
+    assert playlist_id == "pl-existing"
+    assert client.create_playlist_calls == 0
+    assert client.remove_tracks_calls == 0
+    assert client.added_track_batches == [("pl-existing", ["track:2"])]
+
+
+def test_create_playlist_create_another_preserves_existing_behavior() -> None:
+    client = _FakeClient()
+    provider = _build_provider(client)
+    provider.authenticate({"token": "x"})
+
+    playlist_id = provider.create_playlist(
+        _plan(),
+        conflict_action=PlaylistConflictAction.CREATE_ANOTHER,
+        existing_playlist_id="pl-existing",
+    )
+
+    assert playlist_id == "playlist-1"
+    assert client.create_playlist_calls == 1
+    assert client.remove_tracks_calls == 0
+    assert client.add_tracks_calls == 1
+
+
+def test_create_playlist_cancel_aborts_without_changes() -> None:
+    client = _FakeClient()
+    provider = _build_provider(client)
+    provider.authenticate({"token": "x"})
+
+    with pytest.raises(PlaylistCreationCancelledError):
+        provider.create_playlist(_plan(), conflict_action=PlaylistConflictAction.CANCEL)
+
+    assert client.create_playlist_calls == 0
+    assert client.remove_tracks_calls == 0
+    assert client.add_tracks_calls == 0
+
+
+def test_create_playlist_api_failure_surfaces_message() -> None:
+    client = _FakeClient(
+        remove_tracks_failure=RuntimeError("boom"),
+        playlist_tracks_by_id={"pl-existing": ["track:9"]},
+    )
+    provider = _build_provider(client)
+    provider.authenticate({"token": "x"})
+
+    with pytest.raises(PlaylistCreationError, match="clear existing playlist"):
+        provider.create_playlist(
+            _plan(),
+            conflict_action=PlaylistConflictAction.REPLACE_EXISTING,
+            existing_playlist_id="pl-existing",
+        )
+
+
+def test_create_playlist_partial_upload_failure_reports_progress() -> None:
+    client = _FakeClient(add_tracks_fail_on_track_id="track:2")
+    provider = _build_provider(client)
+    provider.authenticate({"token": "x"})
+
+    with pytest.raises(PlaylistCreationError, match="after 1/2 tracks"):
+        provider.create_playlist(_plan(), batch_size=1)

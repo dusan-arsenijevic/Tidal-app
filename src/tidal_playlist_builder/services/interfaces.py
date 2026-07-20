@@ -2,7 +2,14 @@
 
 from typing import Protocol
 
-from tidal_playlist_builder.model import Album, Artist, PlaylistBuildPlan, Track
+from tidal_playlist_builder.model import (
+    Album,
+    Artist,
+    PlaylistBuildPlan,
+    PlaylistConflictAction,
+    PlaylistSummary,
+    Track,
+)
 
 
 class IMusicProvider(Protocol):
@@ -20,5 +27,14 @@ class IMusicProvider(Protocol):
     def get_album_tracks(self, album_id: str) -> list[Track]:
         """Retrieve tracks for an album."""
 
-    def create_playlist(self, plan: PlaylistBuildPlan) -> str:
+    def find_playlist_by_name(self, playlist_name: str) -> PlaylistSummary | None:
+        """Return an existing playlist by case-insensitive name match."""
+
+    def create_playlist(
+        self,
+        plan: PlaylistBuildPlan,
+        *,
+        conflict_action: PlaylistConflictAction = PlaylistConflictAction.CREATE_ANOTHER,
+        existing_playlist_id: str | None = None,
+    ) -> str:
         """Create playlist from a build plan and return playlist id."""

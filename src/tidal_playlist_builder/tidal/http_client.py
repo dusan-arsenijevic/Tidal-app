@@ -139,6 +139,29 @@ class HttpTidalApiClient:
             require_auth=True,
         )
 
+    def list_playlists(self) -> list[dict[str, object]]:
+        payload = self._request_json("GET", "/playlists", require_auth=True)
+        return self._extract_items(payload, "playlists")
+
+    def get_playlist_track_ids(self, playlist_id: str) -> list[str]:
+        payload = self._request_json(
+            "GET",
+            f"/playlists/{playlist_id}/tracks",
+            require_auth=True,
+        )
+        tracks = self._extract_items(payload, "tracks")
+        return [str(track.get("id", "")).strip() for track in tracks]
+
+    def remove_tracks_from_playlist(
+        self, playlist_id: str, track_ids: list[str]
+    ) -> None:
+        self._request_json(
+            "DELETE",
+            f"/playlists/{playlist_id}/tracks",
+            json_body={"track_ids": track_ids},
+            require_auth=True,
+        )
+
     def delete_playlist(self, playlist_id: str) -> None:
         self._request_json(
             "DELETE",

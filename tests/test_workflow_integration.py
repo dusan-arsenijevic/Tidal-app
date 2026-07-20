@@ -9,6 +9,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QPushButton, QTableView
 
 from tidal_playlist_builder.application import AppConfig, build_production_composition
+from tidal_playlist_builder.model import PlaylistConflictAction
 
 
 @dataclass
@@ -18,11 +19,16 @@ class _WorkflowApiClient:
     track_calls: int = 0
     create_calls: int = 0
     add_calls: int = 0
+    list_playlists_calls: int = 0
+    get_playlist_tracks_calls: int = 0
+    remove_tracks_calls: int = 0
     delete_calls: int = 0
     auth_calls: int = 0
     fail_search: bool = False
     add_sleep_seconds: float = 0.0
     added_batches: list[list[str]] = field(default_factory=list)
+    playlist_response: list[dict[str, object]] = field(default_factory=list)
+    playlist_tracks_by_id: dict[str, list[str]] = field(default_factory=dict)
 
     def authenticate(self, credentials: dict[str, str]) -> str:
         self.auth_calls += 1
@@ -90,6 +96,20 @@ class _WorkflowApiClient:
         if self.add_sleep_seconds > 0:
             time.sleep(self.add_sleep_seconds)
         self.added_batches.append(list(track_ids))
+
+    def list_playlists(self) -> list[dict[str, object]]:
+        self.list_playlists_calls += 1
+        return list(self.playlist_response)
+
+    def get_playlist_track_ids(self, playlist_id: str) -> list[str]:
+        self.get_playlist_tracks_calls += 1
+        return list(self.playlist_tracks_by_id.get(playlist_id, []))
+
+    def remove_tracks_from_playlist(
+        self, playlist_id: str, track_ids: list[str]
+    ) -> None:
+        del playlist_id, track_ids
+        self.remove_tracks_calls += 1
 
     def delete_playlist(self, playlist_id: str) -> None:
         del playlist_id
@@ -302,3 +322,38 @@ def test_workflow_sign_in_enables_search_and_persists_credentials(
     assert isinstance(store, _FakeCredentialStore)
     assert store.saved == ("demo-user", "demo-pass")
     assert client.auth_calls == 1
+
+
+def test_workflow_existing_playlist_append_uses_conflict_choice(
+    qtbot, tmp_path: Path
+) -> None:
+    client = _WorkflowApiClient(
+        playlist_response=[
+            {"id": "playlist:existing", "name": "Massive Attack Playlist"}
+        ],
+        playlist_tracks_by_id={"playlist:existing": ["a1-0"]},
+    )
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    composition = build_production_composition(
+        _config(tmp_path), settings=settings, api_client=client
+    )
+    qtbot.addWidget(composition.main_window)
+    composition.main_window.show()
+    composition.main_window.show_error_dialog = lambda _t, _m: None  # type: ignore[assignment]
+    composition.main_window.show_success_dialog = lambda _t, _m: None  # type: ignore[assignment]
+    setattr(
+        composition.main_window,
+        "prompt_playlist_conflict",
+        lambda _name: PlaylistConflictAction.APPEND_TRACKS,
+    )
+
+    composition.workflow._on_search_requested("massive")
+    qtbot.waitUntil(lambda: composition.album_table_model.rowCount() == 2, timeout=3000)
+    composition.album_table_model.set_row_checked(0, True)
+    action = _create_playlist_action(composition)
+    action.trigger()
+
+    qtbot.waitUntil(lambda: client.add_calls > 0, timeout=3000)
+    assert client.list_playlists_calls == 1
+    assert client.create_calls == 0
+    assert client.remove_tracks_calls == 0

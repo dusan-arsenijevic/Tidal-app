@@ -5,6 +5,7 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QGroupBox,
     QLabel,
@@ -113,12 +114,56 @@ def test_splitter_and_panels_created(qtbot, tmp_path: Path) -> None:
     qtbot.addWidget(window)
     window.show()
 
+    layout_splitter = window.findChild(QSplitter, "mainLayoutSplitter")
+    assert layout_splitter is not None
+    assert layout_splitter.orientation() == Qt.Orientation.Vertical
+    assert layout_splitter.count() == 2
+
     assert isinstance(window.splitter, QSplitter)
     assert window.splitter.orientation() == Qt.Orientation.Horizontal
     assert window.splitter.count() == 3
 
     panel_widgets = [window.splitter.widget(i) for i in range(window.splitter.count())]
     assert all(isinstance(widget, QGroupBox) for widget in panel_widgets)
+
+
+def test_select_all_checkbox_toggles_album_selection(qtbot, tmp_path: Path) -> None:
+    window = MainWindow(
+        settings=_settings(tmp_path), album_table_model=_model_with_two_albums()
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    checkbox = window.findChild(QCheckBox, "selectAllAlbumsCheckbox")
+    assert checkbox is not None
+    assert checkbox.isEnabled()
+
+    checkbox.setChecked(True)
+    assert sorted(window.album_table_model.checked_album_ids()) == [
+        "album:1",
+        "album:2",
+    ]
+    assert checkbox.checkState() == Qt.CheckState.Checked
+
+    checkbox.setChecked(False)
+    assert window.album_table_model.checked_album_ids() == []
+    assert checkbox.checkState() == Qt.CheckState.Unchecked
+
+
+def test_select_all_checkbox_shows_partial_state(qtbot, tmp_path: Path) -> None:
+    window = MainWindow(
+        settings=_settings(tmp_path), album_table_model=_model_with_two_albums()
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    checkbox = window.findChild(QCheckBox, "selectAllAlbumsCheckbox")
+    assert checkbox is not None
+
+    window.album_table_model.set_row_checked(0, True)
+
+    assert checkbox.isTristate()
+    assert checkbox.checkState() == Qt.CheckState.PartiallyChecked
 
 
 def test_model_attachment(qtbot, tmp_path: Path) -> None:
@@ -212,7 +257,7 @@ def test_search_signal_emits_user_intent(qtbot, tmp_path: Path) -> None:
     window.show()
     window.set_search_enabled(True)
 
-    search_input = window.findChild(QLineEdit)
+    search_input = window.findChild(QLineEdit, "artistSearchInput")
     search_button = next(
         (
             button

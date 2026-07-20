@@ -30,6 +30,7 @@ from tidal_playlist_builder.model import (
     AlbumType,
     DuplicateStatus,
     FilterCriteria,
+    PlaylistConflictAction,
 )
 from tidal_playlist_builder.__about__ import (
     APP_NAME,
@@ -84,9 +85,12 @@ class MainWindow(QMainWindow):
         self._has_album_selection = False
         self._publish_ready = False
         self._authenticated_username: str | None = None
+        self._updating_select_all_checkbox = False
 
+        self._layout_splitter: QSplitter
         self._splitter: QSplitter
         self._album_table: QTableView
+        self._select_all_checkbox: QCheckBox
         self._search_input: QLineEdit
         self._search_button: QPushButton
         self._refresh_action: QAction
@@ -164,7 +168,9 @@ class MainWindow(QMainWindow):
         root_layout.setContentsMargins(8, 8, 8, 8)
         root_layout.setSpacing(8)
 
-        root_layout.addWidget(self._create_search_row(root))
+        self._layout_splitter = QSplitter(Qt.Orientation.Vertical, root)
+        self._layout_splitter.setObjectName("mainLayoutSplitter")
+        self._layout_splitter.addWidget(self._create_search_row(root))
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal, root)
         self._splitter.addWidget(self._create_filter_panel())
@@ -174,7 +180,11 @@ class MainWindow(QMainWindow):
         self._splitter.setStretchFactor(1, 1)
         self._splitter.setStretchFactor(2, 0)
         self._splitter.setSizes([230, 700, 270])
-        root_layout.addWidget(self._splitter)
+        self._layout_splitter.addWidget(self._splitter)
+        self._layout_splitter.setStretchFactor(0, 0)
+        self._layout_splitter.setStretchFactor(1, 1)
+        self._layout_splitter.setSizes([110, 650])
+        root_layout.addWidget(self._layout_splitter)
 
         self.setCentralWidget(root)
         self._bind_model_signals()
@@ -184,13 +194,14 @@ class MainWindow(QMainWindow):
         self._album_table_model.modelReset.connect(self._on_model_selection_changed)
         self._album_table_model.rowsInserted.connect(self._on_model_selection_changed)
         self._album_table_model.rowsRemoved.connect(self._on_model_selection_changed)
-        self._refresh_create_playlist_action_state()
+        self._on_model_selection_changed()
 
     def _create_search_row(self, parent: QWidget) -> QWidget:
         search_group = QGroupBox("Artist Search", parent)
         row = QHBoxLayout(search_group)
         row.addWidget(QLabel("Artist Name", search_group))
         self._search_input = QLineEdit(search_group)
+        self._search_input.setObjectName("artistSearchInput")
         self._search_input.setPlaceholderText("Search artist")
         self._search_button = QPushButton("Search", search_group)
         self._search_button.clicked.connect(self._on_search_clicked)
@@ -294,6 +305,16 @@ class MainWindow(QMainWindow):
     def _create_album_table(self) -> QWidget:
         panel = QGroupBox("Albums")
         layout = QVBoxLayout(panel)
+        selection_row = QHBoxLayout()
+        self._select_all_checkbox = QCheckBox("Select All", panel)
+        self._select_all_checkbox.setObjectName("selectAllAlbumsCheckbox")
+        self._select_all_checkbox.setEnabled(False)
+        self._select_all_checkbox.stateChanged.connect(
+            self._on_select_all_state_changed
+        )
+        selection_row.addWidget(self._select_all_checkbox)
+        selection_row.addStretch(1)
+        layout.addLayout(selection_row)
 
         self._album_table = QTableView(panel)
         self._album_table.setModel(self._album_proxy_model)
@@ -499,6 +520,41 @@ class MainWindow(QMainWindow):
     def show_error_dialog(self, title: str, message: str) -> None:
         QMessageBox.critical(self, title, message)
 
+    def prompt_playlist_conflict(self, playlist_name: str) -> PlaylistConflictAction:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Question)
+        dialog.setWindowTitle("Playlist already exists")
+        dialog.setText(
+            f"A playlist named '{playlist_name}' already exists on your TIDAL account."
+        )
+        dialog.setInformativeText("Choose how you want to continue:")
+        replace_button = dialog.addButton(
+            "Replace existing playlist",
+            QMessageBox.ButtonRole.AcceptRole,
+        )
+        append_button = dialog.addButton(
+            "Append tracks",
+            QMessageBox.ButtonRole.ActionRole,
+        )
+        create_another_button = dialog.addButton(
+            "Create another playlist",
+            QMessageBox.ButtonRole.DestructiveRole,
+        )
+        cancel_button = dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.setDefaultButton(replace_button)
+        dialog.exec()
+
+        clicked = dialog.clickedButton()
+        if clicked == replace_button:
+            return PlaylistConflictAction.REPLACE_EXISTING
+        if clicked == append_button:
+            return PlaylistConflictAction.APPEND_TRACKS
+        if clicked == create_another_button:
+            return PlaylistConflictAction.CREATE_ANOTHER
+        if clicked == cancel_button:
+            return PlaylistConflictAction.CANCEL
+        return PlaylistConflictAction.CANCEL
+
     def show_about_dialog(self) -> None:
         QMessageBox.about(
             self,
@@ -572,8 +628,38 @@ class MainWindow(QMainWindow):
     def _on_model_selection_changed(self, *_args: object) -> None:
         checked_ids = self._album_table_model.checked_album_ids()
         self._has_album_selection = bool(checked_ids)
+        self._refresh_select_all_checkbox(len(checked_ids))
         self._refresh_create_playlist_action_state()
         self.albumSelectionChanged.emit(checked_ids)
+
+    @Slot(int)
+    def _on_select_all_state_changed(self, state: int) -> None:
+        if self._updating_select_all_checkbox:
+            return
+        if state == Qt.CheckState.PartiallyChecked.value:
+            return
+        self._album_table_model.set_all_checked(state == Qt.CheckState.Checked.value)
+
+    def _refresh_select_all_checkbox(self, selected_count: int) -> None:
+        total = self._album_table_model.rowCount()
+        self._updating_select_all_checkbox = True
+        if total <= 0:
+            self._select_all_checkbox.setEnabled(False)
+            self._select_all_checkbox.setTristate(False)
+            self._select_all_checkbox.setCheckState(Qt.CheckState.Unchecked)
+        elif selected_count <= 0:
+            self._select_all_checkbox.setEnabled(True)
+            self._select_all_checkbox.setTristate(False)
+            self._select_all_checkbox.setCheckState(Qt.CheckState.Unchecked)
+        elif selected_count >= total:
+            self._select_all_checkbox.setEnabled(True)
+            self._select_all_checkbox.setTristate(False)
+            self._select_all_checkbox.setCheckState(Qt.CheckState.Checked)
+        else:
+            self._select_all_checkbox.setEnabled(True)
+            self._select_all_checkbox.setTristate(True)
+            self._select_all_checkbox.setCheckState(Qt.CheckState.PartiallyChecked)
+        self._updating_select_all_checkbox = False
 
     def _refresh_create_playlist_action_state(self) -> None:
         enabled = (

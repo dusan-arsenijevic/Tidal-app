@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import import_module
+import json
 from pathlib import Path
 import logging
 from typing import Any
@@ -63,8 +64,7 @@ class TidalApiSdkClient:
         if not success or not self._session.check_login():
             raise AuthenticationError("TIDAL OAuth login did not complete successfully")
         if remember_session:
-            self._session_config.session_file.parent.mkdir(parents=True, exist_ok=True)
-            self._session.save_session_to_file(self._session_config.session_file)
+            self._persist_session(self._session_config.session_file)
         self._authenticated = True
         logger.info("TIDAL OAuth login succeeded")
         return "oauth"
@@ -144,6 +144,49 @@ class TidalApiSdkClient:
             raise ProviderError("TIDAL playlist object does not support adding tracks")
         add_operation([str(track_id) for track_id in track_ids], allow_duplicates=False)
 
+    def list_playlists(self) -> list[dict[str, object]]:
+        self._ensure_authenticated()
+        user = self._session.user
+        if user is None:
+            raise ProviderError("No authenticated TIDAL user available")
+        playlists_operation = getattr(user, "playlists", None)
+        if callable(playlists_operation):
+            playlists = playlists_operation()
+        elif isinstance(playlists_operation, list):
+            playlists = playlists_operation
+        else:
+            playlists = []
+        payload: list[dict[str, object]] = []
+        for playlist in playlists:
+            payload.append(
+                {
+                    "id": str(getattr(playlist, "id", "")).strip(),
+                    "name": str(getattr(playlist, "name", "")).strip(),
+                }
+            )
+        return payload
+
+    def get_playlist_track_ids(self, playlist_id: str) -> list[str]:
+        self._ensure_authenticated()
+        playlist = self._session.playlist(playlist_id)
+        tracks = playlist.tracks(limit=10000)
+        return [str(getattr(track, "id", "")).strip() for track in tracks]
+
+    def remove_tracks_from_playlist(
+        self, playlist_id: str, track_ids: list[str]
+    ) -> None:
+        self._ensure_authenticated()
+        playlist = self._session.playlist(playlist_id)
+        remove_by_id_operation = getattr(playlist, "remove_by_id", None)
+        if callable(remove_by_id_operation):
+            remove_by_id_operation([str(track_id) for track_id in track_ids])
+            return
+        remove_operation = getattr(playlist, "remove", None)
+        if callable(remove_operation):
+            remove_operation([str(track_id) for track_id in track_ids])
+            return
+        raise ProviderError("TIDAL playlist object does not support removing tracks")
+
     def delete_playlist(self, playlist_id: str) -> None:
         self._ensure_authenticated()
         playlist = self._session.playlist(playlist_id)
@@ -165,6 +208,24 @@ class TidalApiSdkClient:
         except Exception:  # pragma: no cover - backend/session corruption handling
             logger.warning("Failed to restore persisted TIDAL session", exc_info=True)
         return False
+
+    def _persist_session(self, session_file: Path) -> None:
+        session_file.parent.mkdir(parents=True, exist_ok=True)
+        self._session.save_session_to_file(session_file)
+        if session_file.exists():
+            return
+        logger.warning(
+            "tidalapi did not persist OAuth session file, writing fallback session payload"
+        )
+        fallback_payload = {
+            "token_type": {"data": getattr(self._session, "token_type", None)},
+            "session_id": {"data": getattr(self._session, "session_id", None)},
+            "access_token": {"data": getattr(self._session, "access_token", None)},
+            "refresh_token": {"data": getattr(self._session, "refresh_token", None)},
+            "is_pkce": {"data": getattr(self._session, "is_pkce", None)},
+        }
+        with session_file.open("w", encoding="utf-8") as file:
+            json.dump(fallback_payload, file)
 
     def _ensure_authenticated(self) -> None:
         if not self._authenticated and not self._session.check_login():

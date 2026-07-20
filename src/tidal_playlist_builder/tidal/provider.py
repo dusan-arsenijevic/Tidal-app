@@ -11,7 +11,14 @@ from tidal_playlist_builder.exceptions import (
     PlaylistCreationError,
     ValidationError,
 )
-from tidal_playlist_builder.model import Album, Artist, PlaylistBuildPlan, Track
+from tidal_playlist_builder.model import (
+    Album,
+    Artist,
+    PlaylistBuildPlan,
+    PlaylistConflictAction,
+    PlaylistSummary,
+    Track,
+)
 from tidal_playlist_builder.repositories import (
     AlbumRepository,
     ArtistRepository,
@@ -123,6 +130,9 @@ class TidalProvider(IMusicProvider):
         self._playlist_repository = playlist_repository or PlaylistRepository(
             create_operation=self._api_client.create_playlist,
             add_tracks_operation=self._api_client.add_tracks_to_playlist,
+            list_playlists_operation=self._api_client.list_playlists,
+            playlist_track_ids_operation=self._api_client.get_playlist_track_ids,
+            remove_tracks_operation=self._api_client.remove_tracks_from_playlist,
             delete_operation=self._api_client.delete_playlist,
         )
 
@@ -196,6 +206,9 @@ class TidalProvider(IMusicProvider):
     def create_playlist(
         self,
         plan: PlaylistBuildPlan,
+        *,
+        conflict_action: PlaylistConflictAction = PlaylistConflictAction.CREATE_ANOTHER,
+        existing_playlist_id: str | None = None,
         progress_callback: ProgressCallback | None = None,
         cancellation_token: CancellationToken | None = None,
         batch_size: int = 100,
@@ -203,20 +216,14 @@ class TidalProvider(IMusicProvider):
         """Create a Tidal playlist from a build plan."""
         self._ensure_authenticated()
         self._validate_playlist_plan(plan, batch_size)
+        resolved_conflict_action = self._resolve_conflict_action(
+            conflict_action=conflict_action,
+            existing_playlist_id=existing_playlist_id,
+        )
 
         token = cancellation_token or CancellationToken()
         track_ids = [track.id for track in plan.selected_tracks]
-        total_tracks = len(track_ids)
-        playlist_id: str | None = None
-
-        self._check_cancelled(token, "before_create")
-        self._emit_progress(
-            progress_callback,
-            "creating_playlist",
-            0,
-            total_tracks,
-            "Creating playlist shell",
-        )
+        target_track_ids = list(track_ids)
 
         playlist_name = (
             plan.playlist_name.strip()
@@ -225,62 +232,191 @@ class TidalProvider(IMusicProvider):
         )
         description = f"{plan.track_count} tracks from selected albums"
 
-        try:
-            playlist_id = self._execute_with_resilience(
-                lambda: self._playlist_repository.create_playlist(
-                    playlist_name, description
-                )
-            )
-            logger.info("Created playlist shell '%s' (%s)", playlist_name, playlist_id)
-            self._emit_progress(
-                progress_callback,
-                "playlist_created",
-                0,
-                total_tracks,
-                f"Playlist shell created: {playlist_id}",
-            )
+        self._check_cancelled(token, "before_create")
+        if resolved_conflict_action is PlaylistConflictAction.CANCEL:
+            raise PlaylistCreationCancelledError("Playlist creation cancelled by user")
 
-            completed = 0
-            for chunk in self._chunk_track_ids(track_ids, batch_size):
-                self._check_cancelled(token, "adding_tracks")
-                self._execute_with_resilience(
-                    lambda: self._playlist_repository.add_tracks(playlist_id, chunk)
+        playlist_id: str
+        created_new_playlist = False
+        try:
+            if resolved_conflict_action is PlaylistConflictAction.CREATE_ANOTHER:
+                self._emit_progress(
+                    progress_callback,
+                    "creating_playlist",
+                    0,
+                    len(target_track_ids),
+                    "Creating playlist shell",
                 )
-                completed += len(chunk)
-                logger.debug(
-                    "Added %s tracks to playlist %s (completed=%s/%s)",
-                    len(chunk),
-                    playlist_id,
-                    completed,
-                    total_tracks,
+                playlist_id = self._execute_with_resilience(
+                    lambda: self._playlist_repository.create_playlist(
+                        playlist_name, description
+                    )
                 )
                 self._emit_progress(
                     progress_callback,
-                    "adding_tracks",
-                    completed,
-                    total_tracks,
-                    f"Added {completed}/{total_tracks} tracks",
+                    "playlist_created",
+                    0,
+                    len(target_track_ids),
+                    f"Playlist shell created: {playlist_id}",
                 )
+                created_new_playlist = True
+            else:
+                assert existing_playlist_id is not None
+                playlist_id = existing_playlist_id
+                existing_track_ids = self._load_playlist_track_ids(playlist_id)
+                if resolved_conflict_action is PlaylistConflictAction.REPLACE_EXISTING:
+                    self._emit_progress(
+                        progress_callback,
+                        "replacing_playlist",
+                        0,
+                        len(existing_track_ids),
+                        f"Clearing existing playlist: {playlist_id}",
+                    )
+                    self._clear_playlist_tracks(
+                        playlist_id, existing_track_ids, batch_size
+                    )
+                else:
+                    existing_track_set = set(existing_track_ids)
+                    target_track_ids = [
+                        track_id
+                        for track_id in target_track_ids
+                        if track_id not in existing_track_set
+                    ]
+                    self._emit_progress(
+                        progress_callback,
+                        "appending_playlist",
+                        0,
+                        len(target_track_ids),
+                        f"Appending {len(target_track_ids)} new tracks",
+                    )
 
+            self._upload_tracks(
+                playlist_id=playlist_id,
+                track_ids=target_track_ids,
+                progress_callback=progress_callback,
+                cancellation_token=token,
+                batch_size=batch_size,
+            )
             self._cache.invalidate("playlist:")
             self._cache.set(f"playlist:created:{playlist_id}", True, ttl_seconds=300)
             self._emit_progress(
                 progress_callback,
                 "completed",
-                total_tracks,
-                total_tracks,
-                f"Playlist created: {playlist_id}",
+                len(target_track_ids),
+                len(target_track_ids),
+                f"Playlist updated: {playlist_id}",
             )
             logger.info("Playlist creation completed (%s)", playlist_id)
             return playlist_id
         except PlaylistCreationCancelledError:
             logger.warning("Playlist creation cancelled")
-            self._recover_failed_playlist(playlist_id)
+            if created_new_playlist:
+                self._recover_failed_playlist(playlist_id)
             raise
         except Exception:
             logger.exception("Playlist creation failed")
-            self._recover_failed_playlist(playlist_id)
+            if created_new_playlist:
+                self._recover_failed_playlist(playlist_id)
             raise
+
+    def find_playlist_by_name(self, playlist_name: str) -> PlaylistSummary | None:
+        self._ensure_authenticated()
+        normalized_name = playlist_name.strip().casefold()
+        if not normalized_name:
+            raise ValidationError("playlist_name cannot be empty")
+        try:
+            playlists = self._execute_with_resilience(
+                self._playlist_repository.list_playlists
+            )
+        except Exception as error:
+            raise PlaylistCreationError(
+                "Failed to look up existing playlists"
+            ) from error
+        for playlist in playlists:
+            if playlist.name.casefold() == normalized_name:
+                return playlist
+        return None
+
+    def _resolve_conflict_action(
+        self,
+        *,
+        conflict_action: PlaylistConflictAction,
+        existing_playlist_id: str | None,
+    ) -> PlaylistConflictAction:
+        if (
+            conflict_action
+            in {
+                PlaylistConflictAction.REPLACE_EXISTING,
+                PlaylistConflictAction.APPEND_TRACKS,
+            }
+            and not existing_playlist_id
+        ):
+            raise ValidationError("existing_playlist_id is required for this action")
+        return conflict_action
+
+    def _load_playlist_track_ids(self, playlist_id: str) -> list[str]:
+        try:
+            return self._execute_with_resilience(
+                lambda: self._playlist_repository.get_playlist_track_ids(playlist_id)
+            )
+        except Exception as error:
+            raise PlaylistCreationError(
+                "Failed to retrieve existing playlist tracks"
+            ) from error
+
+    def _clear_playlist_tracks(
+        self, playlist_id: str, track_ids: list[str], batch_size: int
+    ) -> None:
+        if not track_ids:
+            return
+        for chunk in self._chunk_track_ids(track_ids, batch_size):
+            try:
+                self._execute_with_resilience(
+                    lambda: self._playlist_repository.remove_tracks(playlist_id, chunk)
+                )
+            except Exception as error:
+                raise PlaylistCreationError(
+                    "Failed to clear existing playlist tracks"
+                ) from error
+
+    def _upload_tracks(
+        self,
+        *,
+        playlist_id: str,
+        track_ids: list[str],
+        progress_callback: ProgressCallback | None,
+        cancellation_token: CancellationToken,
+        batch_size: int,
+    ) -> None:
+        total_tracks = len(track_ids)
+        completed = 0
+        for chunk in self._chunk_track_ids(track_ids, batch_size):
+            self._check_cancelled(cancellation_token, "adding_tracks")
+            try:
+                self._execute_with_resilience(
+                    lambda: self._playlist_repository.add_tracks(playlist_id, chunk)
+                )
+            except PlaylistCreationCancelledError:
+                raise
+            except Exception as error:
+                raise PlaylistCreationError(
+                    f"Playlist upload failed after {completed}/{total_tracks} tracks"
+                ) from error
+            completed += len(chunk)
+            logger.debug(
+                "Added %s tracks to playlist %s (completed=%s/%s)",
+                len(chunk),
+                playlist_id,
+                completed,
+                total_tracks,
+            )
+            self._emit_progress(
+                progress_callback,
+                "adding_tracks",
+                completed,
+                total_tracks,
+                f"Added {completed}/{total_tracks} tracks",
+            )
 
     def _recover_failed_playlist(self, playlist_id: str | None) -> None:
         if playlist_id is None:

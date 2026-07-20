@@ -27,5 +27,16 @@ class TidalApiClient(Protocol):
     def add_tracks_to_playlist(self, playlist_id: str, track_ids: list[str]) -> None:
         """Append tracks to playlist."""
 
+    def list_playlists(self) -> list[dict[str, object]]:
+        """List authenticated user's playlists."""
+
+    def get_playlist_track_ids(self, playlist_id: str) -> list[str]:
+        """Return track ids currently present in a playlist."""
+
+    def remove_tracks_from_playlist(
+        self, playlist_id: str, track_ids: list[str]
+    ) -> None:
+        """Remove specific track ids from a playlist."""
+
     def delete_playlist(self, playlist_id: str) -> None:
         """Delete playlist by id."""

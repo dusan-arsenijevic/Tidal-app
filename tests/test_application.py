@@ -37,6 +37,17 @@ class _FakeApiClient:
     def add_tracks_to_playlist(self, playlist_id: str, track_ids: list[str]) -> None:
         return None
 
+    def list_playlists(self) -> list[dict[str, object]]:
+        return []
+
+    def get_playlist_track_ids(self, playlist_id: str) -> list[str]:
+        return []
+
+    def remove_tracks_from_playlist(
+        self, playlist_id: str, track_ids: list[str]
+    ) -> None:
+        return None
+
     def delete_playlist(self, playlist_id: str) -> None:
         return None
 

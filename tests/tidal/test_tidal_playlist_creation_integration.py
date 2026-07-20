@@ -6,6 +6,7 @@ from tempfile import mkdtemp
 
 import pytest
 
+from tidal_playlist_builder.exceptions import PlaylistCreationError
 from tidal_playlist_builder.model import (
     Album,
     AlbumEdition,
@@ -58,6 +59,19 @@ class _PlaylistClient:
             error = self.add_failures.pop(0)
             raise error
         self.added_batches.append(list(track_ids))
+
+    def list_playlists(self) -> list[dict[str, object]]:
+        return []
+
+    def get_playlist_track_ids(self, playlist_id: str) -> list[str]:
+        del playlist_id
+        return []
+
+    def remove_tracks_from_playlist(
+        self, playlist_id: str, track_ids: list[str]
+    ) -> None:
+        del playlist_id, track_ids
+        return None
 
     def delete_playlist(self, playlist_id: str) -> None:
         if self.delete_failure is not None:
@@ -182,7 +196,7 @@ def test_error_recovery_deletes_partial_playlist() -> None:
     )
     provider = _provider(client, retry_backoff_seconds=0.0)
 
-    with pytest.raises(TimeoutError, match="t3"):
+    with pytest.raises(PlaylistCreationError, match="Playlist upload failed"):
         provider.create_playlist(_plan(track_count=2), batch_size=2)
 
     assert client.created_playlist_ids == ["pl-1"]
@@ -199,7 +213,7 @@ def test_error_recovery_logs_when_delete_fails(
     provider = _provider(client, retry_backoff_seconds=0.0)
 
     caplog.set_level(logging.ERROR)
-    with pytest.raises(TimeoutError):
+    with pytest.raises(PlaylistCreationError):
         provider.create_playlist(_plan(track_count=1))
 
     assert "Failed to recover playlist" in caplog.text

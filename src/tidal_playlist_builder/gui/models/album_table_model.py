@@ -225,6 +225,25 @@ class AlbumTableModel(QAbstractTableModel):
         index = self.index(row_index, AlbumColumn.CHECKBOX)
         return self.setData(index, checked, Qt.ItemDataRole.EditRole)
 
+    def set_all_checked(self, checked: bool) -> None:
+        """Set checked state for all rows."""
+        if not self._rows:
+            return
+        changed = False
+        for row in self._rows:
+            if row.checked != checked:
+                row.checked = checked
+                changed = True
+        if not changed:
+            return
+        top_left = self.index(0, AlbumColumn.CHECKBOX)
+        bottom_right = self.index(len(self._rows) - 1, AlbumColumn.CHECKBOX)
+        self.dataChanged.emit(
+            top_left,
+            bottom_right,
+            [Qt.ItemDataRole.CheckStateRole, Qt.ItemDataRole.EditRole],
+        )
+
     def _display_value(self, row: _AlbumRow, column: AlbumColumn) -> object:
         album = row.album
         if column == AlbumColumn.CHECKBOX:
