@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class TidalApiSessionConfig:
     session_file: Path
+    legacy_session_file: Path | None = None
 
 
 class TidalApiSdkClient:
@@ -197,16 +198,21 @@ class TidalApiSdkClient:
 
     def _try_restore_session(self) -> bool:
         session_file = self._session_config.session_file
-        if not session_file.exists():
-            return False
-        try:
-            if (
-                self._session.load_session_from_file(session_file)
-                and self._session.check_login()
-            ):
-                return True
-        except Exception:  # pragma: no cover - backend/session corruption handling
-            logger.warning("Failed to restore persisted TIDAL session", exc_info=True)
+        for candidate in self._session_file_candidates():
+            if not candidate.exists():
+                continue
+            try:
+                if (
+                    self._session.load_session_from_file(candidate)
+                    and self._session.check_login()
+                ):
+                    if candidate != session_file:
+                        self._persist_session(session_file)
+                    return True
+            except Exception:  # pragma: no cover - backend/session corruption handling
+                logger.warning(
+                    "Failed to restore persisted TIDAL session", exc_info=True
+                )
         return False
 
     def _persist_session(self, session_file: Path) -> None:
@@ -231,6 +237,12 @@ class TidalApiSdkClient:
         if not self._authenticated and not self._session.check_login():
             raise AuthenticationError("Provider is not authenticated")
         self._authenticated = True
+
+    def _session_file_candidates(self) -> tuple[Path, ...]:
+        legacy = self._session_config.legacy_session_file
+        if legacy is None:
+            return (self._session_config.session_file,)
+        return (self._session_config.session_file, legacy)
 
     def _load_tidalapi_module(self) -> Any:
         try:

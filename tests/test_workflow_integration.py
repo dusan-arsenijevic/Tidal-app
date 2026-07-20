@@ -166,7 +166,7 @@ def _create_playlist_action(composition) -> QAction:
         (
             candidate
             for candidate in composition.main_window.findChildren(QAction)
-            if candidate.text() == "Create Playlist" and candidate.isEnabled()
+            if candidate.text() == "Create Playlist"
         ),
         None,
     )
@@ -272,6 +272,7 @@ def test_workflow_playlist_progress_and_cancellation(qtbot, tmp_path: Path) -> N
     composition.workflow.operationFailed.connect(failures.append)
 
     action = _create_playlist_action(composition)
+    qtbot.waitUntil(lambda: action.isEnabled(), timeout=3000)
     action.trigger()
     action.trigger()
     qtbot.waitUntil(lambda: len(progress_events) > 0, timeout=3000)

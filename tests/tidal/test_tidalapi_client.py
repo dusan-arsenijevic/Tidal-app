@@ -90,3 +90,28 @@ def test_authenticate_restores_saved_session(monkeypatch, tmp_path: Path) -> Non
     result = client.authenticate({"interactive": "false"})
 
     assert result == "session-restored"
+
+
+def test_authenticate_restores_legacy_session_and_migrates(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        TidalApiSdkClient,
+        "_load_tidalapi_module",
+        lambda self: _FakeTidalModule(),
+    )
+    session_file = tmp_path / "session" / "tidalapi-session.json"
+    legacy_file = tmp_path / "cache" / "tidalapi-session.json"
+    legacy_file.parent.mkdir(parents=True, exist_ok=True)
+    legacy_file.write_text("{}", encoding="utf-8")
+    client = TidalApiSdkClient(
+        TidalApiSessionConfig(
+            session_file=session_file,
+            legacy_session_file=legacy_file,
+        )
+    )
+
+    result = client.authenticate({"interactive": "false"})
+
+    assert result == "session-restored"
+    assert session_file.exists()

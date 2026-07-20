@@ -209,8 +209,14 @@ def _build_default_api_client(config: AppConfig) -> TidalApiClient:
                 user_agent=config.user_agent,
             )
         )
-    session_file = config.cache_directory / "tidalapi-session.json"
-    return TidalApiSdkClient(TidalApiSessionConfig(session_file=session_file))
+    session_file = config.cache_directory.parent / "session" / "tidalapi-session.json"
+    legacy_session_file = config.cache_directory / "tidalapi-session.json"
+    return TidalApiSdkClient(
+        TidalApiSessionConfig(
+            session_file=session_file,
+            legacy_session_file=legacy_session_file,
+        )
+    )
 
 
 def run() -> int:
