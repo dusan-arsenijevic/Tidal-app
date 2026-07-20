@@ -103,8 +103,6 @@ UninstallDisplayIcon={{app}}\\TidalPlaylistBuilder.exe
 CloseApplications=yes
 CloseApplicationsFilter=TidalPlaylistBuilder.exe
 RestartApplications=no
-ForceCloseApplications=yes
-ForceCloseApplicationsDelay=2000
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
