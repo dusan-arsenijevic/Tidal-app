@@ -178,6 +178,19 @@ def test_model_attachment(qtbot, tmp_path: Path) -> None:
     assert window.album_proxy_model.sourceModel() is window.album_table_model
 
 
+def test_row_numbers_restart_from_one_after_sorting(qtbot, tmp_path: Path) -> None:
+    window = MainWindow(
+        settings=_settings(tmp_path), album_table_model=_model_with_two_albums()
+    )
+    qtbot.addWidget(window)
+    window.show()
+
+    window.album_proxy_model.sort(AlbumColumn.YEAR, Qt.SortOrder.AscendingOrder)
+
+    assert window.album_proxy_model.headerData(0, Qt.Orientation.Vertical) == "1"
+    assert window.album_proxy_model.headerData(1, Qt.Orientation.Vertical) == "2"
+
+
 def test_settings_persistence_on_close(qtbot, tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     window = MainWindow(settings=settings, album_table_model=_model())
@@ -504,6 +517,18 @@ def test_about_dialog_displays_release_metadata(
     assert COPYRIGHT in text
     assert LICENSE_NAME in text
     assert PROJECT_URL in text
+
+
+def test_prompt_artist_selection_handles_empty_and_single_list(
+    qtbot, tmp_path: Path
+) -> None:
+    window = MainWindow(settings=_settings(tmp_path), album_table_model=_model())
+    qtbot.addWidget(window)
+    window.show()
+
+    assert window.prompt_artist_selection([]) is None
+    single = Artist(id="artist:1", name="Massive Attack")
+    assert window.prompt_artist_selection([single]) == single
 
 
 def test_sign_in_action_emits_credentials(qtbot, tmp_path: Path) -> None:

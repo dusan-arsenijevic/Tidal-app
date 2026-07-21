@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from tidal_playlist_builder.model import (
     AlbumEdition,
     AlbumType,
+    Artist,
     DuplicateStatus,
     FilterCriteria,
     PlaylistConflictAction,
@@ -194,7 +195,12 @@ class MainWindow(QMainWindow):
         self._album_table_model.modelReset.connect(self._on_model_selection_changed)
         self._album_table_model.rowsInserted.connect(self._on_model_selection_changed)
         self._album_table_model.rowsRemoved.connect(self._on_model_selection_changed)
+        self._album_proxy_model.modelReset.connect(self._refresh_album_row_numbers)
+        self._album_proxy_model.rowsInserted.connect(self._refresh_album_row_numbers)
+        self._album_proxy_model.rowsRemoved.connect(self._refresh_album_row_numbers)
+        self._album_proxy_model.layoutChanged.connect(self._refresh_album_row_numbers)
         self._on_model_selection_changed()
+        self._refresh_album_row_numbers()
 
     def _create_search_row(self, parent: QWidget) -> QWidget:
         search_group = QGroupBox("Artist Search", parent)
@@ -555,6 +561,38 @@ class MainWindow(QMainWindow):
             return PlaylistConflictAction.CANCEL
         return PlaylistConflictAction.CANCEL
 
+    def prompt_artist_selection(self, artists: list[Artist]) -> Artist | None:
+        if not artists:
+            return None
+        if len(artists) == 1:
+            return artists[0]
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Choose Artist")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Multiple artists matched. Choose one:", dialog))
+
+        artist_combo = QComboBox(dialog)
+        artist_combo.setObjectName("artistSelectionCombo")
+        for artist in artists:
+            artist_combo.addItem(f"{artist.name} ({artist.id})", artist)
+        layout.addWidget(artist_combo)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        selected = artist_combo.currentData()
+        if isinstance(selected, Artist):
+            return selected
+        return None
+
     def show_about_dialog(self) -> None:
         QMessageBox.about(
             self,
@@ -668,6 +706,16 @@ class MainWindow(QMainWindow):
         self._create_playlist_action.setEnabled(enabled)
         self._create_playlist_menu_action.setEnabled(enabled)
         self._publish_playlist_button.setEnabled(enabled)
+
+    @Slot()
+    def _refresh_album_row_numbers(self, *_args: object) -> None:
+        labels_by_source_row: dict[int, str] = {}
+        for proxy_row in range(self._album_proxy_model.rowCount()):
+            proxy_index = self._album_proxy_model.index(proxy_row, 0)
+            source_index = self._album_proxy_model.mapToSource(proxy_index)
+            if source_index.isValid():
+                labels_by_source_row[source_index.row()] = str(proxy_row + 1)
+        self._album_table_model.set_vertical_row_numbers(labels_by_source_row)
 
     @Slot()
     def _on_filter_controls_changed(self, *_args: object) -> None:

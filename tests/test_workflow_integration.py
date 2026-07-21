@@ -4,11 +4,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import time
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QPushButton, QTableView
 
 from tidal_playlist_builder.application import AppConfig, build_production_composition
+from tidal_playlist_builder.gui.models import AlbumColumn
 from tidal_playlist_builder.model import PlaylistConflictAction
 
 
@@ -285,6 +286,33 @@ def test_workflow_playlist_progress_and_cancellation(qtbot, tmp_path: Path) -> N
     assert client.add_calls >= 1
 
 
+def test_publish_uses_current_sorted_album_order(qtbot, tmp_path: Path) -> None:
+    client = _WorkflowApiClient()
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    composition = build_production_composition(
+        _config(tmp_path), settings=settings, api_client=client
+    )
+    qtbot.addWidget(composition.main_window)
+    composition.main_window.show()
+    composition.main_window.show_error_dialog = lambda _t, _m: None  # type: ignore[assignment]
+    composition.main_window.show_success_dialog = lambda _t, _m: None  # type: ignore[assignment]
+
+    composition.workflow._on_search_requested("massive")
+    qtbot.waitUntil(lambda: composition.album_table_model.rowCount() == 2, timeout=3000)
+    composition.album_proxy_model.sort(AlbumColumn.YEAR, Qt.SortOrder.DescendingOrder)
+    composition.album_table_model.set_row_checked(0, True)
+    composition.album_table_model.set_row_checked(1, True)
+
+    action = _create_playlist_action(composition)
+    qtbot.waitUntil(lambda: action.isEnabled(), timeout=3000)
+    action.trigger()
+    qtbot.waitUntil(lambda: client.add_calls > 0, timeout=3000)
+
+    flattened_tracks = [track for batch in client.added_batches for track in batch]
+    assert flattened_tracks
+    assert flattened_tracks[0].startswith("a2-")
+
+
 def test_workflow_sign_in_enables_search_and_persists_credentials(
     monkeypatch, qtbot, tmp_path: Path
 ) -> None:
@@ -358,3 +386,129 @@ def test_workflow_existing_playlist_append_uses_conflict_choice(
     assert client.list_playlists_calls == 1
     assert client.create_calls == 0
     assert client.remove_tracks_calls == 0
+
+
+def test_workflow_normalizes_loaded_album_artist_for_publish(
+    qtbot, tmp_path: Path
+) -> None:
+    class _MismatchedAlbumArtistApiClient(_WorkflowApiClient):
+        def get_artist_albums(self, artist_id: str) -> list[dict[str, object]]:
+            del artist_id
+            self.album_calls += 1
+            return [
+                {
+                    "id": "album:1",
+                    "title": "Mezzanine",
+                    "release_year": 1998,
+                    "album_type": "album",
+                    "edition": "original",
+                    "quality": "lossless",
+                    "is_explicit": False,
+                    "artist": {"id": "other:artist", "name": "Other"},
+                },
+                {
+                    "id": "album:2",
+                    "title": "Mezzanine",
+                    "release_year": 2001,
+                    "album_type": "album",
+                    "edition": "deluxe",
+                    "quality": "lossless",
+                    "is_explicit": False,
+                    "artist": {"id": "other:artist", "name": "Other"},
+                },
+            ]
+
+    client = _MismatchedAlbumArtistApiClient()
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    composition = build_production_composition(
+        _config(tmp_path), settings=settings, api_client=client
+    )
+    qtbot.addWidget(composition.main_window)
+    composition.main_window.show()
+    composition.main_window.show_error_dialog = lambda _t, _m: None  # type: ignore[assignment]
+    composition.main_window.show_success_dialog = lambda _t, _m: None  # type: ignore[assignment]
+
+    composition.workflow._on_search_requested("massive")
+    qtbot.waitUntil(lambda: composition.album_table_model.rowCount() == 2, timeout=3000)
+    composition.album_table_model.set_row_checked(0, True)
+    action = _create_playlist_action(composition)
+    qtbot.waitUntil(lambda: action.isEnabled(), timeout=3000)
+    action.trigger()
+    qtbot.waitUntil(lambda: client.create_calls == 1, timeout=3000)
+
+
+def test_workflow_uses_user_selected_artist_match(qtbot, tmp_path: Path) -> None:
+    class _MultiArtistApiClient(_WorkflowApiClient):
+        requested_artist_id: str | None = None
+
+        def search_artists(self, query: str, limit: int) -> list[dict[str, object]]:
+            del query, limit
+            self.search_calls += 1
+            return [
+                {"id": "artist:1", "name": "Massive Attack"},
+                {"id": "artist:2", "name": "Massive Attack"},
+            ]
+
+        def get_artist_albums(self, artist_id: str) -> list[dict[str, object]]:
+            self.requested_artist_id = artist_id
+            return super().get_artist_albums(artist_id)
+
+    client = _MultiArtistApiClient()
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    composition = build_production_composition(
+        _config(tmp_path), settings=settings, api_client=client
+    )
+    qtbot.addWidget(composition.main_window)
+    composition.main_window.show()
+    composition.main_window.show_error_dialog = lambda _t, _m: None  # type: ignore[assignment]
+    composition.main_window.show_success_dialog = lambda _t, _m: None  # type: ignore[assignment]
+    setattr(
+        composition.main_window,
+        "prompt_artist_selection",
+        lambda artists: artists[1],
+    )
+
+    composition.workflow._on_search_requested("massive")
+    qtbot.waitUntil(lambda: client.album_calls == 1, timeout=3000)
+    qtbot.waitUntil(lambda: composition.album_table_model.rowCount() == 2, timeout=3000)
+    qtbot.waitUntil(lambda: client.track_calls == 2, timeout=3000)
+
+    assert client.requested_artist_id == "artist:2"
+
+
+def test_workflow_cancels_when_artist_selection_is_dismissed(
+    qtbot, tmp_path: Path
+) -> None:
+    class _MultiArtistApiClient(_WorkflowApiClient):
+        def search_artists(self, query: str, limit: int) -> list[dict[str, object]]:
+            del query, limit
+            self.search_calls += 1
+            return [
+                {"id": "artist:1", "name": "Massive Attack"},
+                {"id": "artist:2", "name": "Massive Attack"},
+            ]
+
+    client = _MultiArtistApiClient()
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    composition = build_production_composition(
+        _config(tmp_path), settings=settings, api_client=client
+    )
+    qtbot.addWidget(composition.main_window)
+    composition.main_window.show()
+    composition.main_window.show_error_dialog = lambda _t, _m: None  # type: ignore[assignment]
+    composition.main_window.show_success_dialog = lambda _t, _m: None  # type: ignore[assignment]
+    setattr(
+        composition.main_window,
+        "prompt_artist_selection",
+        lambda _artists: None,
+    )
+
+    composition.workflow._on_search_requested("massive")
+    qtbot.waitUntil(
+        lambda: composition.main_window.statusBar().currentMessage()
+        == "Artist selection cancelled.",
+        timeout=3000,
+    )
+
+    assert client.album_calls == 0
+    assert composition.album_table_model.rowCount() == 0

@@ -3,7 +3,7 @@
 from dataclasses import replace
 import logging
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, Qt
 
 from tidal_playlist_builder.exceptions import (
     CredentialStorageError,
@@ -105,11 +105,23 @@ class WorkflowController(QObject):
         if not self._provider.is_authenticated:
             self._window.set_status("Sign in to TIDAL before publishing.")
             return
-        if self._current_preview_plan is None:
+        artist = self._current_artist
+        if artist is None:
             self._window.set_status("No publishable playlist preview.")
             return
 
-        plan = self._plan_for_publish(self._current_preview_plan)
+        selected_albums = self._selected_albums_in_publish_order()
+        if not selected_albums:
+            self._window.set_status("No publishable playlist preview.")
+            return
+
+        try:
+            publish_plan = self._playlist_builder.build(artist, selected_albums)
+        except ValidationError as error:
+            self._window.set_status(str(error))
+            return
+
+        plan = self._plan_for_publish(publish_plan)
         playlist_name = self._resolved_playlist_name(plan)
         self._playlist_creation_running = True
         lookup_worker = BaseWorker(
@@ -276,16 +288,21 @@ class WorkflowController(QObject):
             self._refresh_playlist_preview()
             self._window.set_status("No artists found")
             return
-        first_artist = artists[0]
-        if not isinstance(first_artist, Artist):
+        if any(not isinstance(artist, Artist) for artist in artists):
             self._handle_error("Artist search returned invalid data")
             return
-        self._current_artist = first_artist
+
+        selected_artist = self._window.prompt_artist_selection(list(artists))
+        if selected_artist is None:
+            self._window.set_status("Artist selection cancelled.")
+            return
+
+        self._current_artist = selected_artist
         worker = self._worker_pool.start_album_loading(
             self._load_artist_discography,
-            first_artist.id,
+            selected_artist.id,
         )
-        self._connect_album_loading_worker(worker, first_artist)
+        self._connect_album_loading_worker(worker, selected_artist)
 
     def _on_albums_loaded(self, artist: Artist, albums: object) -> None:
         if not isinstance(albums, list) or any(
@@ -293,7 +310,7 @@ class WorkflowController(QObject):
         ):
             self._handle_error("Album loading returned invalid data")
             return
-        typed_albums = list(albums)
+        typed_albums = [replace(album, artist=artist) for album in albums]
         self._current_artist = artist
         self._current_albums = typed_albums
         self._window.set_playlist_name(f"{artist.name} Playlist")
@@ -425,8 +442,7 @@ class WorkflowController(QObject):
             )
             return
 
-        selected_ids = set(self._table_model.checked_album_ids())
-        selected_albums = [a for a in self._current_albums if a.id in selected_ids]
+        selected_albums = self._selected_albums_in_publish_order()
         playlist_name = self._effective_playlist_name(artist)
         if not selected_albums:
             self._window.set_publish_ready(False)
@@ -468,6 +484,35 @@ class WorkflowController(QObject):
             duplicate_summary=f"{plan.duplicates_skipped} duplicate tracks skipped",
             validation_warnings=[],
         )
+
+    def _selected_albums_in_publish_order(self) -> list[Album]:
+        selected_ids = set(self._table_model.checked_album_ids())
+        if not selected_ids:
+            return []
+
+        album_by_id = {album.id: album for album in self._current_albums}
+        selected_visible_ids_in_order: list[str] = []
+        for proxy_row in range(self._proxy_model.rowCount()):
+            proxy_index = self._proxy_model.index(proxy_row, 0)
+            source_index = self._proxy_model.mapToSource(proxy_index)
+            if not source_index.isValid():
+                continue
+            album_data = self._table_model.data(source_index, Qt.ItemDataRole.UserRole)
+            if not isinstance(album_data, Album):
+                continue
+            album_id = album_data.id
+            if album_id in selected_ids:
+                selected_visible_ids_in_order.append(album_id)
+                selected_ids.remove(album_id)
+
+        ordered_selected_ids = selected_visible_ids_in_order + [
+            album.id for album in self._current_albums if album.id in selected_ids
+        ]
+        return [
+            album_by_id[album_id]
+            for album_id in ordered_selected_ids
+            if album_id in album_by_id
+        ]
 
     def _authenticate_and_optionally_persist(
         self, credentials: dict[str, str], remember: bool

@@ -56,6 +56,7 @@ class AlbumTableModel(QAbstractTableModel):
     ) -> None:
         super().__init__(parent)
         self._rows: list[_AlbumRow] = []
+        self._vertical_row_numbers: dict[int, str] = {}
         self.set_albums(albums or [])
 
     def rowCount(  # noqa: N802
@@ -85,7 +86,7 @@ class AlbumTableModel(QAbstractTableModel):
                 return self._HEADERS[AlbumColumn(section)]
             except (ValueError, KeyError):
                 return None
-        return str(section + 1)
+        return self._vertical_row_numbers.get(section, str(section + 1))
 
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
         if not index.isValid():
@@ -188,7 +189,22 @@ class AlbumTableModel(QAbstractTableModel):
             _AlbumRow(album=album, checked=False, duplicate_status="Unique")
             for album in albums
         ]
+        self._vertical_row_numbers.clear()
         self.endResetModel()
+
+    def set_vertical_row_numbers(self, labels_by_source_row: dict[int, str]) -> None:
+        """Set vertical header labels keyed by source row index."""
+        normalized = {
+            row_index: str(label)
+            for row_index, label in labels_by_source_row.items()
+            if 0 <= row_index < len(self._rows)
+        }
+        if normalized == self._vertical_row_numbers:
+            return
+        self._vertical_row_numbers = normalized
+        if not self._rows:
+            return
+        self.headerDataChanged.emit(Qt.Orientation.Vertical, 0, len(self._rows) - 1)
 
     def set_duplicate_groups(self, groups: list[DuplicateGroup]) -> None:
         """Update duplicate status column from duplicate groups."""

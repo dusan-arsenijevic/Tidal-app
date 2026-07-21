@@ -15,6 +15,12 @@ WINDOWS_EXE = ROOT / "dist" / "desktop" / "windows" / "TidalPlaylistBuilder.exe"
 INSTALLER_DIR = ROOT / "dist" / "desktop" / "windows-installer"
 
 
+def _ensure_local_src_on_path() -> None:
+    src_path = str(ROOT / "src")
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+
+
 def main() -> int:
     if sys.platform != "win32":
         raise SystemExit("build_windows_installer.py must be run on Windows")
@@ -66,6 +72,7 @@ def _resolve_iscc() -> Path | None:
 
 
 def _installer_script() -> str:
+    _ensure_local_src_on_path()
     from tidal_playlist_builder.__about__ import APP_NAME
     from tidal_playlist_builder.__about__ import COPYRIGHT
     from tidal_playlist_builder.__about__ import PROJECT_URL

@@ -20,6 +20,12 @@ ICON_SVG = SRC_DIR / "tidal_playlist_builder" / "resources" / "icons" / "app-ico
 APP_NAME = "TidalPlaylistBuilder"
 
 
+def _ensure_local_src_on_path() -> None:
+    src_path = str(SRC_DIR)
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+
+
 @dataclass(frozen=True, slots=True)
 class BuildPaths:
     dist: Path
@@ -31,6 +37,7 @@ def main() -> int:
     if sys.platform != "win32":
         raise SystemExit("build_windows.py must be run on Windows")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    _ensure_local_src_on_path()
 
     from tidal_playlist_builder.__about__ import APP_NAME as PRODUCT_NAME
     from tidal_playlist_builder.__about__ import __version__
